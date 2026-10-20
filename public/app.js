@@ -148,13 +148,25 @@ async function startSync() {
   renderSync();
   if (data.some((r) => r.data?.device && r.data.device !== deviceLabel())) check('sync', true);
 
+  loadRecordings();
+
   if (channel) sb.removeChannel(channel);
   channel = sb
     .channel('items-test')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'items', filter: `user_id=eq.${session.user.id}` }, (p) => {
       if (p.eventType === 'DELETE') {
         syncItems.delete(p.old.id);
+        recItems.delete(p.old.id);
         renderSync();
+        renderRecordings();
+        return;
+      }
+      if (p.new.kind === 'test-audio') {
+        recItems.set(p.new.id, p.new);
+        renderRecordings(p.new.id);
+        if (p.new.data?.device && p.new.data.device !== deviceLabel()) {
+          msg($('micMsg'), `${p.new.data.device}에서 녹음한 파일이 들어왔어요. 재생해 보세요.`, 'ok');
+        }
         return;
       }
       if (p.new.kind !== 'test') return;
@@ -256,14 +268,17 @@ async function sha256(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-let ttsModel = store.get('ttsModel');
+const FREE_TTS_MODELS = [/^gemini-3\.8-flash-tts$/, /^gemini-3\.8-flash-lite-tts$/, /^gemini-3\.1-flash-tts/];
+let ttsModel = store.get('ttsModel2');
 async function findTtsModel() {
   if (ttsModel) return ttsModel;
   const { models } = await gemini({ action: 'models' });
   const tts = models.map((m) => m.id).filter((id) => /tts/.test(id));
-  ttsModel = tts.filter((id) => /flash/.test(id) && !/lite/.test(id)).sort().reverse()[0] || tts.sort().reverse()[0];
+  ttsModel = '';
+  for (const re of FREE_TTS_MODELS) { ttsModel = tts.find((id) => re.test(id)) || ''; if (ttsModel) break; }
+  if (!ttsModel) ttsModel = tts.find((id) => /flash/.test(id) && !/omni|pro/.test(id)) || tts[0];
   if (!ttsModel) throw new Error('Gemini 음성 모델을 찾지 못했어요.');
-  store.set('ttsModel', ttsModel);
+  store.set('ttsModel2', ttsModel);
   return ttsModel;
 }
 
@@ -371,11 +386,77 @@ $('micToggle').addEventListener('click', async () => {
   if (error) {
     msg($('micMsg'), '녹음은 됐지만 보관함 저장 실패: ' + error.message, 'err');
   } else {
-    msg($('micMsg'), `녹음 ${res.seconds.toFixed(1)}초 · 보관함 저장 완료. 재생해서 들어 보세요.`, 'ok');
+    const row = { kind: 'test-audio', data: { path, seconds: Math.round(res.seconds * 10) / 10, device: deviceLabel(), prompt: $('micPrompt').textContent } };
+    const ins = await sb.from('items').insert(row);
+    if (ins.error) msg($('micMsg'), '녹음은 저장됐지만 목록 등록 실패: ' + ins.error.message, 'err');
+    else msg($('micMsg'), `녹음 ${res.seconds.toFixed(1)}초 · 저장 완료. 다른 기기 목록에도 바로 나타나요.`, 'ok');
     check('mic', true);
   }
   $('aiAudio').disabled = !$('aiModel').value;
 });
+
+const recItems = new Map();
+
+async function loadRecordings() {
+  const { data, error } = await sb
+    .from('items')
+    .select('id, kind, data, created_at')
+    .eq('kind', 'test-audio')
+    .order('created_at', { ascending: false })
+    .limit(5);
+  if (error) return;
+  recItems.clear();
+  data.forEach((r) => recItems.set(r.id, r));
+  renderRecordings();
+}
+
+function renderRecordings(newId) {
+  const list = $('micList');
+  list.textContent = '';
+  const rows = [...recItems.values()].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 5);
+  for (const r of rows) {
+    const li = document.createElement('li');
+    if (r.id === newId) li.className = 'new';
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = `${r.data?.device || ''} · ${fmtTime(r.created_at)} · ${r.data?.seconds ?? '?'}초`;
+    const btns = document.createElement('span');
+    btns.style.display = 'flex';
+    btns.style.gap = '6px';
+    const play = document.createElement('button');
+    play.className = 'ghost small';
+    play.textContent = '▶ 재생';
+    play.onclick = () => useRecording(r, true);
+    const pick = document.createElement('button');
+    pick.className = 'ghost small';
+    pick.textContent = '분석에 쓰기';
+    pick.onclick = () => useRecording(r, false);
+    const del = document.createElement('button');
+    del.className = 'ghost small';
+    del.textContent = '삭제';
+    del.onclick = async () => {
+      await sb.storage.from('media').remove([r.data.path]);
+      const { error } = await sb.from('items').delete().eq('id', r.id);
+      if (!error) { recItems.delete(r.id); renderRecordings(); }
+    };
+    btns.append(play, pick, del);
+    li.append(meta, btns);
+    list.append(li);
+  }
+}
+
+async function useRecording(r, playNow) {
+  const audio = $('micAudio');
+  if (playNow) { audio.src = SILENT_WAV; audio.play().catch(() => {}); }
+  const { data, error } = await sb.storage.from('media').download(r.data.path);
+  if (error) return msg($('micMsg'), '녹음 파일을 받지 못했어요: ' + error.message, 'err');
+  lastWav = data;
+  audio.src = URL.createObjectURL(data);
+  audio.hidden = false;
+  if (playNow) audio.play().catch(() => {});
+  $('aiAudio').disabled = !$('aiModel').value || $('aiModel').disabled;
+  msg($('micMsg'), `${r.data.device}에서 녹음한 파일을 불러왔어요. 4번에서 발음 분석에 쓸 수 있어요.`, 'ok');
+}
 
 /* ---------------- 4. Gemini ---------------- */
 
@@ -400,6 +481,9 @@ async function gemini(body) {
       session_invalid: '로그인이 만료됐어요. 다시 로그인해 주세요.',
     };
     const detail = out.error?.message || out.detail?.error?.message || '';
+    if ((code === 429 || code === 'RESOURCE_EXHAUSTED') && /limit:\s*0\b/.test(detail)) {
+      throw new Error('이 모델은 무료 등급에서 쓸 수 없어요(무료 한도 0). ★ 표시된 무료 모델로 바꿔 주세요.');
+    }
     if (/location is not supported/i.test(detail)) {
       throw new Error('Gemini가 서버 위치를 지원 지역으로 인식하지 못했어요. Worker 위치 설정(placement)이 적용됐는지 확인해 주세요.');
     }
@@ -409,11 +493,21 @@ async function gemini(body) {
 }
 const answerText = (res) => (res.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
 
+// Gemini API 가격표(ai.google.dev/gemini-api/docs/pricing)에서 무료 등급으로 표시된 글자 모델, 우선순위 순.
+// Omni·Pro·Argon 계열은 무료 등급에서 '사용 불가'라 기본값에서 뺀다.
+const V = '(-latest|-\\d{3})?$'; // 예: -latest, -001 같은 꼬리 허용
+const FREE_TEXT_MODELS = ['gemini-3\\.8-flash', 'gemini-3\\.6-flash', 'gemini-3\\.5-flash-lite', 'gemini-3\\.1-flash-lite', 'gemini-3-flash-preview']
+  .map((base) => new RegExp('^' + base + V));
+const isFreeText = (id) => FREE_TEXT_MODELS.some((re) => re.test(id));
+
 function pickDefaultModel(models, preferred) {
   const ids = models.map((m) => m.id);
   if (preferred && ids.includes(preferred)) return preferred;
-  const flash = ids.filter((id) => /flash/.test(id) && !/lite|tts|live|image|embed|preview/.test(id));
-  return flash.sort().reverse()[0] || ids[0] || '';
+  for (const re of FREE_TEXT_MODELS) {
+    const hit = ids.find((id) => re.test(id));
+    if (hit) return hit;
+  }
+  return ids.find((id) => /flash/.test(id) && !/omni|pro|lite|tts|live|image|embed/.test(id)) || ids[0] || '';
 }
 
 $('aiModels').addEventListener('click', async () => {
@@ -423,23 +517,31 @@ $('aiModels').addEventListener('click', async () => {
     const sel = $('aiModel');
     sel.textContent = '';
     const usable = models.filter((m) => !/embed|aqa|imagen|veo/.test(m.id));
-    const chosen = pickDefaultModel(usable, store.get('aiModel') || defaultModel);
-    for (const m of usable) {
-      const o = new Option(`${m.displayName || m.id} (${m.id})`, m.id);
-      if (m.id === chosen) o.selected = true;
-      sel.append(o);
+    const chosen = pickDefaultModel(usable, store.get('aiModel2') || defaultModel);
+    const free = usable.filter((m) => isFreeText(m.id));
+    const rest = usable.filter((m) => !isFreeText(m.id) && !/tts/.test(m.id));
+    for (const [label, group] of [['★ 무료 등급 모델', free], ['그 밖의 모델 (무료 한도 없을 수 있음)', rest]]) {
+      if (!group.length) continue;
+      const og = document.createElement('optgroup');
+      og.label = label;
+      for (const m of group) {
+        const o = new Option(`${isFreeText(m.id) ? '★ ' : ''}${m.displayName || m.id} (${m.id})`, m.id);
+        if (m.id === chosen) o.selected = true;
+        og.append(o);
+      }
+      sel.append(og);
     }
     sel.disabled = false;
-    store.set('aiModel', sel.value);
+    store.set('aiModel2', sel.value);
     $('aiText').disabled = false;
     $('aiAudio').disabled = !lastWav;
-    msg($('aiMsg'), `모델 ${usable.length}개를 불러왔어요. 기본으로 ${sel.value}를 골랐어요.`, 'ok');
+    msg($('aiMsg'), `모델 ${usable.length}개 중 무료 등급 모델 ${sel.value}를 골랐어요.`, 'ok');
   } catch (err) {
     msg($('aiMsg'), err.message, 'err');
     check('ai', false);
   }
 });
-$('aiModel').addEventListener('change', (e) => store.set('aiModel', e.target.value));
+$('aiModel').addEventListener('change', (e) => store.set('aiModel2', e.target.value));
 
 function showResult(pairs) {
   const out = $('aiOut');

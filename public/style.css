@@ -134,3 +134,9 @@ form.row { display: flex; }
 @media (max-width: 480px) {
   .who span { display: none; }
 }
+
+/* 좁은 화면에서 가로 넘침 방지 */
+main > *, .panel > *, .row > * { min-width: 0; }
+select { max-width: 100%; text-overflow: ellipsis; }
+.list li { flex-wrap: wrap; }
+.list li .meta { white-space: normal; }
