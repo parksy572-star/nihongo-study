@@ -1,0 +1,18 @@
+{
+  // Cloudflare Worker 설정. name 은 Cloudflare 대시보드의 Worker 이름과 같아야 한다.
+  "name": "nihongo-study",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  // 대시보드에서 넣은 값(Secret 포함)을 배포할 때 지우지 않는다.
+  "keep_vars": true,
+  // 공개돼도 되는 값만 여기에 둔다. Gemini 키와 이메일은 대시보드에 Secret 으로 넣는다.
+  "vars": {
+    "SUPABASE_URL": "https://zblbrabphcecrlvjxzey.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_Xr9sjL91Si3PFMEGb4CIqQ_h4Rycc-E"
+  }
+}
