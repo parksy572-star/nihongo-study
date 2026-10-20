@@ -1,6 +1,7 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/+esm';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './config.js';
 import { Recorder, toWav16k, blobToBase64 } from './audio.js';
+import { pronunciationPrompt, PRONUNCIATION_SCHEMA, checkPronunciation } from './ai-rules.js';
 
 const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
@@ -369,6 +370,7 @@ $('micToggle').addEventListener('click', async () => {
   const res = await recorder.stop();
   if (!res || res.seconds < 0.5) return msg($('micMsg'), '녹음이 너무 짧아요. 다시 해 주세요.', 'err');
 
+  micSeconds = Math.round(res.seconds * 10) / 10;
   msg($('micMsg'), '변환하고 저장하는 중…');
   try {
     lastWav = await toWav16k(res.blob);
@@ -451,6 +453,7 @@ async function useRecording(r, playNow) {
   const { data, error } = await sb.storage.from('media').download(r.data.path);
   if (error) return msg($('micMsg'), '녹음 파일을 받지 못했어요: ' + error.message, 'err');
   lastWav = data;
+  micSeconds = r.data?.seconds ?? null;
   audio.src = URL.createObjectURL(data);
   audio.hidden = false;
   if (playNow) audio.play().catch(() => {});
@@ -570,6 +573,8 @@ function showResult(pairs) {
 }
 
 $('aiText').addEventListener('click', async () => {
+  if (aiBusy) return;
+  setAiBusy(true);
   msg($('aiMsg'), 'Gemini에 물어보는 중…');
   try {
     const res = await gemini({
@@ -589,41 +594,70 @@ $('aiText').addEventListener('click', async () => {
   } catch (err) {
     msg($('aiMsg'), err.message, 'err');
     check('ai', false);
+  } finally {
+    setAiBusy(false);
   }
 });
 
+// 같은 녹음을 다시 누르면 같은 결과를 보여 준다(무료 한도 절약·결과 일관성).
+const analysisCache = new Map();
+let aiBusy = false;
+let micSeconds = null;
+
+function setAiBusy(on) {
+  aiBusy = on;
+  $('aiText').disabled = on || $('aiModel').disabled;
+  $('aiAudio').disabled = on || $('aiModel').disabled || !lastWav;
+  $('aiModels').disabled = on;
+}
+
 $('aiAudio').addEventListener('click', async () => {
-  if (!lastWav) return msg($('aiMsg'), '먼저 3번에서 녹음해 주세요.', 'err');
-  msg($('aiMsg'), '녹음을 보내 분석하는 중… (10~30초)');
-  try {
-    const b64 = await blobToBase64(lastWav);
-    const target = $('micPrompt').textContent;
-    const prompt = [
-      '당신은 한국인 학습자를 돕는 일본어 발음 코치입니다.',
-      `학습자는 다음 문장을 소리 내어 읽었습니다: 「${target}」`,
-      '녹음을 듣고 아래 JSON 형식으로만 답하세요. 설명 문장은 한국어로 쓰세요.',
-      '{"transcript": "들린 그대로의 일본어", "translation": "한국어 해석",',
-      ' "issues": [{"word": "단어", "heard": "어떻게 들렸는지", "tip": "고치는 방법"}],',
-      ' "overall": "전체 평가 한두 문장(장음·촉음·ん·억양·속도 중심)"}',
-      '문제가 없으면 issues는 빈 배열로 두세요.',
-    ].join('\n');
-    const res = await gemini({
-      model: $('aiModel').value,
-      contents: [{ role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'audio/wav', data: b64 } }] }],
-      generationConfig: { temperature: 0.2, responseMimeType: 'application/json' },
-    });
-    const raw = answerText(res);
-    let j;
-    try { j = JSON.parse(raw); } catch { j = { overall: raw }; }
+  if (aiBusy) return;
+  if (!lastWav) return msg($('aiMsg'), '먼저 3번에서 녹음하거나 목록에서 "분석에 쓰기"를 눌러 주세요.', 'err');
+  const target = $('micPrompt').textContent.trim();
+  const targetKana = $('micPrompt').dataset.kana || '';
+  const model = $('aiModel').value;
+  const wav = lastWav;
+  const key = `${model}|${await sha256(String(wav.size) + '|' + target)}|${wav.size}`;
+
+  const render = (j, fromCache) => {
+    const chk = checkPronunciation(j, targetKana);
+    if (!chk.ok) {
+      $('aiOut').hidden = true;
+      return msg($('aiMsg'), chk.warnings.join(' '), 'err');
+    }
     showResult([
-      ['들린 문장', j.transcript],
-      ['해석', j.translation],
-      ['발음 지적', (j.issues || []).map((i) => `${i.word}: ${i.heard} → ${i.tip}`)],
+      ['들린 문장', j.transcript || '(인식된 말 없음)'],
+      ['목표 문장과 일치율', chk.score === null ? '—' : `${chk.score}%`],
+      ['발음 지적', (j.issues || []).length ? j.issues.map((i) => `[${i.type}] ${i.target} → 「${i.heard}」로 들림. ${i.tip}`) : ['특별히 고칠 점 없음']],
       ['전체 평가', j.overall],
+      ['AI 확신도', { high: '높음', medium: '보통', low: '낮음' }[j.confidence] || j.confidence],
     ]);
-    msg($('aiMsg'), '발음 분석까지 됐어요. 0단계의 Gemini 확인 끝!', 'ok');
+    const note = chk.warnings.length ? ' 주의: ' + chk.warnings.join(' ') : '';
+    msg($('aiMsg'), (fromCache ? '같은 녹음이라 이전 분석 결과를 다시 보여줘요.' : '발음 분석 완료.') + note, chk.warnings.length ? 'err' : 'ok');
     check('ai', true);
+  };
+
+  if (analysisCache.has(key)) return render(analysisCache.get(key), true);
+
+  setAiBusy(true);
+  msg($('aiMsg'), '녹음을 보내 분석하는 중… (10~30초, 끝날 때까지 기다려 주세요)');
+  try {
+    const b64 = await blobToBase64(wav);
+    const res = await gemini({
+      model,
+      contents: [{ role: 'user', parts: [{ text: pronunciationPrompt(target, micSeconds) }, { inlineData: { mimeType: 'audio/wav', data: b64 } }] }],
+      generationConfig: { temperature: 0, responseMimeType: 'application/json', responseSchema: PRONUNCIATION_SCHEMA },
+    });
+    let j;
+    try { j = JSON.parse(answerText(res)); } catch { j = null; }
+    if (!j) throw new Error('AI 답을 읽지 못했어요. 한 번 더 눌러 주세요.');
+    if (wav !== lastWav) return; // 기다리는 동안 다른 녹음으로 바뀌었으면 결과를 버린다
+    analysisCache.set(key, j);
+    render(j, false);
   } catch (err) {
     msg($('aiMsg'), err.message, 'err');
+  } finally {
+    setAiBusy(false);
   }
 });
