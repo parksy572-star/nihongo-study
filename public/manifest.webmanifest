@@ -1,0 +1,13 @@
+{
+  "name": "일본어 공부방",
+  "short_name": "일본어",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f3f1",
+  "theme_color": "#d9827f",
+  "lang": "ko",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
