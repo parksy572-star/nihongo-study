@@ -182,33 +182,48 @@ $('syncForm').addEventListener('submit', async (e) => {
 
 /* ---------------- 2. 듣기 ---------------- */
 
+// Gemini 음성: PC·휴대폰 어디서나 같은 목소리. 한 번 만든 음성은 내 보관함에 저장해 다시 쓴다.
+const GEMINI_VOICES = [
+  ['Kore', '여성 · 또렷함'],
+  ['Leda', '여성 · 부드러움'],
+  ['Charon', '남성 · 차분함'],
+  ['Puck', '남성 · 밝음'],
+];
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=';
+const ttsAudio = new Audio();
+ttsAudio.preload = 'auto';
+
 function loadVoices() {
   const sel = $('ttsVoice');
-  const voices = (window.speechSynthesis?.getVoices() || []).filter((v) => v.lang?.toLowerCase().startsWith('ja'));
+  const saved = store.get('ttsVoice') || 'gemini:Kore';
   sel.textContent = '';
-  if (!voices.length) {
-    sel.append(new Option('일본어 음성을 찾는 중…', ''));
-    return;
+  const g = document.createElement('optgroup');
+  g.label = 'Gemini 음성 (모든 기기 공통)';
+  for (const [name, desc] of GEMINI_VOICES) {
+    const o = new Option(`Gemini ${name} — ${desc}`, `gemini:${name}`);
+    if (o.value === saved) o.selected = true;
+    g.append(o);
   }
-  const saved = store.get('ttsVoice');
-  for (const v of voices) {
-    const o = new Option(`${v.name}${v.localService ? '' : ' (온라인)'}`, v.voiceURI);
-    if (v.voiceURI === saved) o.selected = true;
-    sel.append(o);
+  sel.append(g);
+  const voices = (window.speechSynthesis?.getVoices() || []).filter((v) => v.lang?.toLowerCase().startsWith('ja'));
+  if (voices.length) {
+    const d = document.createElement('optgroup');
+    d.label = '이 기기 음성 (오프라인)';
+    for (const v of voices) {
+      const o = new Option(`${v.name}${v.localService ? '' : ' (온라인)'}`, v.voiceURI);
+      if (v.voiceURI === saved) o.selected = true;
+      d.append(o);
+    }
+    sel.append(d);
   }
-  msg($('ttsMsg'), `일본어 음성 ${voices.length}개를 찾았어요.`);
 }
-if ('speechSynthesis' in window) {
-  loadVoices();
-  speechSynthesis.onvoiceschanged = loadVoices;
-} else {
-  msg($('ttsMsg'), '이 브라우저는 음성 읽기를 지원하지 않아요.', 'err');
-  check('tts', false);
-}
+loadVoices();
+if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = loadVoices;
 $('ttsVoice').addEventListener('change', (e) => store.set('ttsVoice', e.target.value));
 
-export function speak(text, rate = 1) {
+function deviceSpeak(text, rate) {
   return new Promise((resolve, reject) => {
+    if (!('speechSynthesis' in window)) return reject('이 브라우저는 기기 음성을 지원하지 않아요');
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'ja-JP';
     u.rate = rate;
@@ -221,14 +236,87 @@ export function speak(text, rate = 1) {
   });
 }
 
+function pcmToWav(b64, mimeType) {
+  const bin = atob(b64);
+  const pcm = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) pcm[i] = bin.charCodeAt(i);
+  if (/wav/.test(mimeType || '')) return new Blob([pcm], { type: 'audio/wav' });
+  const rate = Number((/rate=(\d+)/.exec(mimeType || '') || [])[1]) || 24000;
+  const view = new DataView(new ArrayBuffer(44));
+  const str = (o, t) => [...t].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); view.setUint32(4, 36 + pcm.length, true); str(8, 'WAVE'); str(12, 'fmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true); str(36, 'data'); view.setUint32(40, pcm.length, true);
+  return new Blob([view, pcm], { type: 'audio/wav' });
+}
+
+async function sha256(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+let ttsModel = store.get('ttsModel');
+async function findTtsModel() {
+  if (ttsModel) return ttsModel;
+  const { models } = await gemini({ action: 'models' });
+  const tts = models.map((m) => m.id).filter((id) => /tts/.test(id));
+  ttsModel = tts.filter((id) => /flash/.test(id) && !/lite/.test(id)).sort().reverse()[0] || tts.sort().reverse()[0];
+  if (!ttsModel) throw new Error('Gemini 음성 모델을 찾지 못했어요.');
+  store.set('ttsModel', ttsModel);
+  return ttsModel;
+}
+
+async function geminiVoiceBlob(text, voiceName) {
+  const model = await findTtsModel();
+  const path = `${session.user.id}/tts/${await sha256(`${model}|${voiceName}|${text}`)}.wav`;
+  const cached = await sb.storage.from('media').download(path);
+  if (!cached.error && cached.data?.size > 44) return { blob: cached.data, fromCache: true };
+
+  const res = await gemini({
+    model,
+    contents: [{ role: 'user', parts: [{ text }] }],
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+    },
+  });
+  const part = (res.candidates?.[0]?.content?.parts || []).find((p) => p.inlineData?.data);
+  if (!part) throw new Error('음성이 만들어지지 않았어요.');
+  const blob = pcmToWav(part.inlineData.data, part.inlineData.mimeType);
+  sb.storage.from('media').upload(path, blob, { contentType: 'audio/wav', upsert: true });
+  return { blob, fromCache: false };
+}
+
+export async function speak(text, rate = 1) {
+  const choice = $('ttsVoice').value || 'gemini:Kore';
+  if (!choice.startsWith('gemini:')) return deviceSpeak(text, rate);
+  const { blob, fromCache } = await geminiVoiceBlob(text, choice.slice(7));
+  if (ttsAudio.src.startsWith('blob:')) URL.revokeObjectURL(ttsAudio.src);
+  ttsAudio.src = URL.createObjectURL(blob);
+  ttsAudio.playbackRate = rate;
+  await ttsAudio.play();
+  await new Promise((resolve) => { ttsAudio.onended = resolve; });
+  return { fromCache };
+}
+
+// 아이폰은 버튼을 누른 순간에 소리를 한 번 재생해 둬야 나중에 받은 음성도 재생된다.
+function unlockAudio() {
+  ttsAudio.src = SILENT_WAV;
+  ttsAudio.play().catch(() => {});
+}
+
 $('ttsPlay').addEventListener('click', async () => {
+  const gem = ($('ttsVoice').value || 'gemini:').startsWith('gemini:');
+  if (gem) unlockAudio();
   try {
-    msg($('ttsMsg'), '읽는 중…');
-    await speak($('ttsText').value, Number($('ttsRate').value));
-    msg($('ttsMsg'), '소리가 잘 들렸다면 듣기 통과!', 'ok');
+    msg($('ttsMsg'), gem ? 'Gemini 음성을 만드는 중… (처음 한 번만 몇 초 걸려요)' : '읽는 중…');
+    const out = await speak($('ttsText').value, Number($('ttsRate').value));
+    const note = gem ? (out?.fromCache ? ' (저장된 음성 재생)' : ' (새로 만들어 보관함에 저장)') : '';
+    msg($('ttsMsg'), '소리가 잘 들렸다면 듣기 통과!' + note, 'ok');
     check('tts', true);
   } catch (err) {
-    msg($('ttsMsg'), '읽기 실패: ' + err, 'err');
+    msg($('ttsMsg'), '읽기 실패: ' + (err?.message || err), 'err');
     check('tts', false);
   }
 });
@@ -311,7 +399,11 @@ async function gemini(body) {
       server_missing_supabase_config: 'Cloudflare에 SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY가 아직 없어요.',
       session_invalid: '로그인이 만료됐어요. 다시 로그인해 주세요.',
     };
-    throw new Error(hints[code] || `오류 (${code}) ${out.error?.message || out.detail?.error?.message || ''}`);
+    const detail = out.error?.message || out.detail?.error?.message || '';
+    if (/location is not supported/i.test(detail)) {
+      throw new Error('Gemini가 서버 위치를 지원 지역으로 인식하지 못했어요. Worker 위치 설정(placement)이 적용됐는지 확인해 주세요.');
+    }
+    throw new Error(hints[code] || `오류 (${code}) ${detail}`);
   }
   return out;
 }
@@ -391,7 +483,7 @@ $('aiText').addEventListener('click', async () => {
     showResult([['면접관 질문(예시)', text]]);
     msg($('aiMsg'), 'Gemini 연결 통과! 질문을 눌러 들어 볼 수도 있어요.', 'ok');
     check('ai', true);
-    $('aiOut').querySelector('dd').onclick = () => speak(text);
+    $('aiOut').querySelector('dd').onclick = () => { unlockAudio(); speak(text).catch(() => {}); };
   } catch (err) {
     msg($('aiMsg'), err.message, 'err');
     check('ai', false);
