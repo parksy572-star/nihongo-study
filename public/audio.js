@@ -96,3 +96,29 @@ export function blobToBase64(blob) {
     fr.readAsDataURL(blob);
   });
 }
+
+// 녹음에 말소리가 있는지 기기에서 먼저 본다(16kHz 모노 WAV 기준).
+// 20ms 단위로 소리 크기를 재서, 조용한 바탕보다 확실히 큰 구간의 비율을 돌려준다.
+export async function speechLevel(wav) {
+  const buf = await wav.arrayBuffer();
+  const view = new DataView(buf);
+  const rate = view.getUint32(24, true) || 16000;
+  const n = Math.floor((buf.byteLength - 44) / 2);
+  const frame = Math.max(1, Math.round(rate * 0.02));
+  const levels = [];
+  for (let i = 0; i + frame <= n; i += frame) {
+    let sum = 0;
+    for (let j = 0; j < frame; j++) {
+      const s = view.getInt16(44 + (i + j) * 2, true) / 32768;
+      sum += s * s;
+    }
+    levels.push(Math.sqrt(sum / frame));
+  }
+  if (!levels.length) return { seconds: 0, voiced: 0, peak: 0, silent: true };
+  const sorted = [...levels].sort((a, b) => a - b);
+  const floor = sorted[Math.floor(sorted.length * 0.1)];
+  const peak = sorted[sorted.length - 1];
+  const threshold = Math.max(0.012, floor * 3);
+  const voiced = levels.filter((l) => l > threshold).length / levels.length;
+  return { seconds: n / rate, voiced, peak, silent: peak < 0.02 || voiced < 0.03 };
+}
