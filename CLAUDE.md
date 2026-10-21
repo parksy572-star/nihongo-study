@@ -13,13 +13,13 @@
 | --- | --- |
 | `public/` | 빌드 없이 그대로 배포되는 정적 파일(HTML·CSS·ES 모듈). 프레임워크 없음 |
 | `public/index.html`, `public/js/app.js` | 앱 진입점. 로그인 → 데이터 불러오기 → 해시 라우터(`#/words` 등)로 화면을 그린다 |
-| `public/js/` | 공통 모듈: `core`(DOM·시트·모달·라우터), `db`(Supabase 동기화·오프라인 대기열·체험 모드), `ai`(Gemini 호출·캐시·재시도), `tts`(Gemini 음성·기기 음성), `kana`(가나·한글 발음 키), `kanji`(한자 정보 창), `furigana`(자동 후리가나), `genko`(원고지 검사), `photo`(자르기·회전·조각), `deck`(판 단위 반복) |
+| `public/js/` | 공통 모듈: `core`(DOM·시트·모달·라우터), `db`(Supabase 동기화·오프라인 대기열·체험 모드), `ai`(Gemini 호출·캐시·재시도), `tts`(Gemini 음성·기기 음성), `kana`(가나·한글 발음 키), `kanji`(한자 정보 창), `furigana`(자동 후리가나), `genko`(원고지 검사), `photo`(자르기·회전·조각), `deck`(판 단위 반복), `wake`(면접·분석 중 화면 꺼짐 방지) |
 | `public/js/views/` | 화면: 단어장·테스트·문법·회화·면접(`talk*.js`)·작문(`writing*.js`)·검색·설정 |
 | `public/ai-rules.js` | **AI 분석 가이드라인 코드판.** 모든 AI 요청은 `COMMON_RULES`를 앞에 붙이고, 응답 스키마와 사후 검사 함수, 무료 모델 목록(`FREE_*_MODELS`)을 여기에 둔다 |
 | `public/audio.js` | 녹음(MediaRecorder) → 16kHz 모노 WAV 변환, 말소리 유무 검사 |
 | `public/data/kanji/` | 한자 데이터(KANJIDIC2·KanjiVG·常用漢字表 대조) 32개 묶음 + `radicals.json` + `joyo.txt`. `tools/build_kanji.py`로 다시 만든다 |
 | `public/check.html`, `check.js` | 0단계 점검 페이지(보존) |
-| `src/worker.js`, `src/gemini.js` | Cloudflare Worker. `/api/gemini`만 처리하고 나머지는 정적 파일. Gemini 키는 Worker Secret에만 있다 |
+| `src/worker.js`, `src/gemini.js` | Cloudflare Worker. `/api/gemini`만 처리하고 나머지는 정적 파일. Gemini 키는 Worker Secret에만 있다. 로그인 확인 결과는 최대 5분 기억하고, `action: 'file'`은 보관함의 녹음을 Gemini 파일 저장소로 옮겨 주소를 돌려준다(녹음은 휴대폰에서 한 번만 올림, 다시 인코딩하지 않음) |
 | `wrangler.jsonc` | Worker 설정. `placement.region = gcp:us-east4`는 Gemini "User location is not supported" 오류를 피하려고 넣은 것이므로 지우지 말 것 |
 | `supabase/schema.sql` | DB·보관함 설정. 여러 번 실행해도 안전하게 유지 |
 
@@ -27,7 +27,7 @@
 
 - **데이터**: Supabase `public.items` 한 표에 `kind`(`word`·`kanji`·`grammar`·`preset`·`session`·`writing`·`log`·`settings`·`progress`(진행 중인 테스트·면접·작문)·`ai`(AI 결과 캐시, 시작 때 불러오지 않음))와 `data`(jsonb)로 저장. 화면은 `db.put/patch/remove`만 쓰고, 저장 대기열·실시간 반영은 `js/db.js`가 맡는다. RLS로 본인 행만 접근. 파일(녹음·작문 사진·TTS 캐시)은 Storage `media/<user_id>/...`. PC·휴대폰 동기화는 Realtime(`postgres_changes`)으로 한다.
 - **기기 간 동기화(필수)**: 기기마다 달라야 하는 것(기기 내장 음성 선택, 마이크 권한, 화면 배치)을 뺀 **모든 것**을 서버에 저장하고 PC·휴대폰에 실시간 반영한다. 학습 데이터뿐 아니라 AI 분석 결과(입력 녹음·사진·글과 연결해 저장, 같은 입력은 어느 기기에서든 저장된 결과 재사용), 진행 중인 단어 테스트·면접 세션·작문 초안, 학습 기록, 설정까지 포함. 결과를 브라우저 메모리나 localStorage에만 두지 않는다(localStorage는 오프라인 임시 사본 용도만). 긴 글은 동시 수정 시 덮어쓰기 전에 알린다. 기능마다 '다른 기기에서 열면 그대로 보이고 이어서 할 수 있는가'를 확인한다. 자세한 표는 기획서 '데이터 구조 > 기기 간 동기화'.
-- **AI**: 브라우저는 `/api/gemini`로만 Gemini를 부른다(키 노출 금지). 무료 등급 모델만 쓴다(`ai-rules.js`의 무료 모델 목록, 설정 > AI 모델에서 변경). 분석·교정은 temperature 0, 응답은 `responseSchema`로 고정, 결과는 사이트에서 한 번 더 검사한 뒤 보여준다. 같은 입력은 캐시 결과 재사용, 실행 중 버튼 잠금.
+- **AI**: 브라우저는 `/api/gemini`로만 Gemini를 부른다(키 노출 금지). 녹음은 `media`에 보관함 경로(`{mimeType, path, blob}`)로 넘기면 서버가 꺼내 쓰고, 실패하면 직접 보낸다. 화면이 꺼졌다 돌아오면 끊긴 요청을 자동으로 다시 보내고, 오래 걸리면 시간 초과로 알린다(`ai.js`의 `postJson`). 연습 면접은 분석하는 동안 다음 질문을 미리 만든다(`talk-run.js`의 `prefetchNext`). 무료 등급 모델만 쓴다(`ai-rules.js`의 무료 모델 목록, 설정 > AI 모델에서 변경). 분석·교정은 temperature 0, 응답은 `responseSchema`로 고정, 결과는 사이트에서 한 번 더 검사한 뒤 보여준다. 같은 입력은 캐시 결과 재사용, 실행 중 버튼 잠금.
 - **음성**: 듣기는 Gemini TTS(기본 Kore)를 쓰고 생성한 음성은 `media/<uid>/tts/<sha256>.wav`에 캐시. 아이폰은 버튼을 누른 순간 오디오를 한 번 재생(unlock)해야 이후 재생이 된다.
 - **한자 정보**: 일본 한자 기준. 데이터는 KANJIDIC2(CC BY-SA 4.0), 획순은 KanjiVG(CC BY-SA 3.0) — 출처 표기 유지. nihongokanji.com은 **링크만** 건다(이용 안내상 스크래핑·내용 복제 금지). 네이버 일본어사전도 링크로만 연결.
 - **화면**: 휴대폰 우선(390px 폭에서 가로 넘침 없어야 함), 라이트/다크 모두. 단어 테스트를 제외한 모든 목록은 리스트형/카드형 전환.
