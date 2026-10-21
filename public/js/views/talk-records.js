@@ -12,6 +12,7 @@ import { RoundDeck } from '../deck.js';
 import { streakSetting } from '../prefs.js';
 import { kataToHira } from '../kana.js';
 import { furi } from '../furigana.js';
+import { keepAwake } from '../wake.js';
 
 /* ---------------- 기록 상세 ---------------- */
 
@@ -51,19 +52,19 @@ function turnPanel(r, t, i, conv) {
       const btn = h('button', { type: 'button' }, '지금 분석하기');
       btn.onclick = async () => {
         const done = busy(btn, '분석 중…');
+        const awake = keepAwake();
         try {
-          const wav = await db.download(at.audio);
           const res = await runTask({
             task: 'interviewAnalyze',
             prompt: interviewAnalyzePrompt({ setting: r.data.setting, question: t.question_ja, heard: at.heard, answer: at.answer, seconds: at.seconds, targetSeconds: r.data.targetSeconds || 45, otherAnswer: t.order === 'other-first' ? t.other?.answer_ja : '', conversation: conv }),
-            media: [{ mimeType: 'audio/wav', data: await blobToBase64(wav) }],
+            media: [{ mimeType: 'audio/wav', path: at.audio }],
             schema: INTERVIEW_ANALYZE_SCHEMA, check: (j) => checkInterviewAnalysis(j, at.answer),
-            cacheKey: `${at.key || await blobKey(wav)}|${await blobKey(new Blob([at.answer + '|' + t.question_ja + '|' + (t.order === 'other-first' ? t.other?.answer_ja || '' : '') + '|' + (r.data.targetSeconds || 45)]))}`,
+            cacheKey: `${at.key || await blobKey(await db.download(at.audio))}|${await blobKey(new Blob([at.answer + '|' + t.question_ja + '|' + (t.order === 'other-first' ? t.other?.answer_ja || '' : '') + '|' + (r.data.targetSeconds || 45)]))}`,
           });
           at.analysis = res.result; at.warnings = res.warnings;
           db.patch(r.id, { turns: r.data.turns });
           fill();
-        } catch (e) { toast(e.message, 'err'); } finally { done(); }
+        } catch (e) { toast(e.message, 'err'); } finally { done(); awake(); }
       };
       body.append(h('p', { class: 'jp' }, at.answer), btn);
     }
@@ -155,6 +156,7 @@ function isWeak(it) {
 }
 
 function runReview(el, state, ctx) {
+  const release = keepAwake();
   const all = new Map(reviewItems().map((i) => [i.key, i]));
   const deck = new RoundDeck({ state: state.deck });
   const vs = voiceSettings();
@@ -183,7 +185,7 @@ function runReview(el, state, ctx) {
     const recMsg = h('p', { class: 'msg' });
     const pronBox = h('div', { class: 'stack' });
     recBtn.onclick = async () => {
-      if (!recorder.recording) {
+      if (!recorder.active) {
         unlock(); stopAll();
         try { await recorder.start(); } catch { toast('마이크를 쓸 수 없어요', 'err'); return; }
         recBtn.replaceChildren(icon('stop', 16), '녹음 끝내기'); recBtn.className = 'danger';
@@ -245,7 +247,7 @@ function runReview(el, state, ctx) {
     speak(it.turn.question_ja, { voice: vs.interviewer }).catch(() => {});
   };
   const mark = (known) => {
-    if (recorder.recording) { toast('녹음을 먼저 끝내 주세요'); return; }
+    if (recorder.active) { toast('녹음을 먼저 끝내 주세요'); return; }
     deck.answer(known); save(); draw();
   };
   const onKey = (e) => {
@@ -255,9 +257,10 @@ function runReview(el, state, ctx) {
     else if (e.key === 'z' || e.key === 'Z') { if (deck.undo()) { save(); draw(); } }
   };
   document.addEventListener('keydown', onKey);
-  el._cleanup = () => { document.removeEventListener('keydown', onKey); stopAll(); if (recorder.recording) recorder.stop(); };
+  el._cleanup = () => { document.removeEventListener('keydown', onKey); stopAll(); if (recorder.active) recorder.stop(); release(); };
   const finishView = () => {
     document.removeEventListener('keydown', onKey);
+    release();
     const hard = deck.hard(1).map((x) => all.get(x.id)).filter(Boolean);
     db.clearProgress('talkReview');
     replace(el, h('div', { class: 'panel stack' },

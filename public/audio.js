@@ -22,6 +22,8 @@ export class Recorder {
     this.rec = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
     this.chunks = [];
     this.rec.ondataavailable = (e) => e.data && e.data.size && this.chunks.push(e.data);
+    this.stoppedAt = 0;
+    this.rec.addEventListener('stop', () => { this.stoppedAt = this.stoppedAt || performance.now(); });
     this.rec.start();
     this.startedAt = performance.now();
   }
@@ -29,19 +31,28 @@ export class Recorder {
   stop() {
     return new Promise((resolve) => {
       if (!this.rec) return resolve(null);
-      this.rec.onstop = () => {
+      const finish = () => {
         const blob = new Blob(this.chunks, { type: this.rec.mimeType || 'audio/webm' });
-        const seconds = (performance.now() - this.startedAt) / 1000;
+        const seconds = ((this.stoppedAt || performance.now()) - this.startedAt) / 1000;
         this.stream.getTracks().forEach((t) => t.stop());
         this.rec = null;
+        this.stoppedAt = 0;
         resolve({ blob, seconds });
       };
+      // 화면 꺼짐 등으로 브라우저가 이미 녹음을 멈췄으면 그때까지 녹음된 것으로 끝낸다
+      if (this.rec.state === 'inactive') return finish();
+      this.rec.onstop = finish;
       this.rec.stop();
     });
   }
 
   get recording() {
     return !!this.rec && this.rec.state === 'recording';
+  }
+
+  // 녹음을 시작했고 아직 결과를 받지 않았음(브라우저가 중간에 멈춘 경우 포함)
+  get active() {
+    return !!this.rec;
   }
 }
 

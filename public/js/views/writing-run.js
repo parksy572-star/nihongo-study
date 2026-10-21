@@ -15,6 +15,7 @@ import { genkoRuleOn } from '../prefs.js';
 import { loadJoyo } from '../kanji.js';
 import { renderWritingResult, writingTitle } from './writing.js';
 import { furi } from '../furigana.js';
+import { keepAwake } from '../wake.js';
 
 export const CATEGORIES = ['자기소개', '지원동기', '일상', '의견문', 'JLPT형', '입시 예상'];
 const PAPERS = [['genko-h', '원고지 가로'], ['genko-v', '원고지 세로'], ['plain', '일반 종이']];
@@ -218,7 +219,9 @@ class WritingRunner {
 
   async runOcr(btn) {
     const s = this.w.setting;
-    const done = busy(btn, '사진 속 글자 읽는 중…');
+    const awake = keepAwake(); // 읽는 동안 화면이 꺼지지 않게
+    const done0 = busy(btn, '사진 속 글자 읽는 중…');
+    const done = () => { done0(); awake(); };
     if (this.w.timer && !this.w.timer.stoppedAt) this.w.timer.stoppedAt = new Date().toISOString();
     this.w.phase = 'ocr';
     this.save();
@@ -244,6 +247,7 @@ class WritingRunner {
       this.w.ocr = results;
       this.w.phase = 'verify';
       this.save();
+      awake();
       this.render();
     } catch (e) {
       toast(e.message, 'err', 5000);
@@ -326,7 +330,9 @@ class WritingRunner {
   /* ---------- 5. 분석 ---------- */
   async analyze(btn) {
     const s = this.w.setting;
-    const done = busy(btn, '분석 중… (20~40초)');
+    const awake = keepAwake(); // 분석하는 동안 화면이 꺼지지 않게
+    const done0 = busy(btn, '분석 중… (20~40초)');
+    const done = () => { done0(); awake(); };
     this.w.phase = 'analyzing';
     this.save();
     try {
@@ -358,6 +364,7 @@ class WritingRunner {
       this.w.warnings = res.cached ? ['같은 사진·글이라 저장된 분석 결과를 보여줘요.', ...res.warnings] : res.warnings;
       this.w.phase = 'result';
       this.save();
+      awake();
       this.render();
     } catch (e) {
       toast(e.message, 'err', 5000);

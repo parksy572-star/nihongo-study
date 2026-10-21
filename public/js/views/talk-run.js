@@ -5,7 +5,7 @@
 
 import { h, icon, go, replace, toast, confirmDialog, modal, mmss, uid, field } from '../core.js';
 import { db } from '../db.js';
-import { runTask, blobKey, blobToBase64, busy } from '../ai.js';
+import { runTask, blobKey, busy } from '../ai.js';
 import { speak, prepare, unlock, stopAll, voiceSettings } from '../tts.js';
 import { Recorder, toWav16k, speechLevel } from '../../audio.js';
 import {
@@ -19,6 +19,7 @@ import { scriptFor, talkTitle, lastAttempt } from '../talk-common.js';
 import { targetSeconds } from '../prefs.js';
 import { renderAnalysis, listenBtn, playRecording } from '../analysis-ui.js';
 import { furi } from '../furigana.js';
+import { keepAwake } from '../wake.js';
 
 export function talkRunView(_p, _q, ctx) {
   const row = db.progress('talk');
@@ -50,6 +51,17 @@ class TalkRunner {
     if (p === 'analyzing-all') this.t.phase = 'review-all';
     if (this.t.phase === 'ready' && !this.curTurn()) this.t.phase = 'next';
     this.tick = setInterval(() => this.onTick(), 500);
+    // 면접 중에는 화면이 꺼지지 않게 한다(지원하는 브라우저에서만)
+    this.releaseWake = keepAwake();
+    // 화면이 꺼지거나 앱을 내렸다 돌아왔을 때: 브라우저가 녹음을 멈췄으면 녹음된 부분까지 저장한다
+    this.onVisible = () => {
+      if (document.hidden || !this.alive) return;
+      if (this.t.phase === 'recording' && this.recorder.active && !this.recorder.recording) {
+        toast('화면이 꺼져 녹음이 멈췄어요. 녹음된 부분까지 저장할게요', '', 4000);
+        this.stopRecording();
+      }
+    };
+    document.addEventListener('visibilitychange', this.onVisible);
     ctx.onDb((e) => this.onRemote(e));
     this.render();
   }
@@ -63,13 +75,15 @@ class TalkRunner {
     this.alive = false;
     clearInterval(this.tick);
     clearTimeout(this._st);
-    if (this.recorder.recording) this.recorder.stop();
+    this.releaseWake?.();
+    document.removeEventListener('visibilitychange', this.onVisible);
+    if (this.recorder.active) this.recorder.stop();
     this.stopMeter();
     stopAll();
   }
 
   async leave() {
-    if (this.recorder.recording) { toast('녹음을 먼저 끝내 주세요'); return; }
+    if (this.recorder.active) { toast('녹음을 먼저 끝내 주세요'); return; }
     if (this.real && ['lobby', 'review-all', 'results'].includes(this.t.phase) === false && this.remaining() > 0) {
       if (!(await confirmDialog('실전 면접 중이에요. 나가도 타이머는 계속 돌아요. 나갈까요?', { ok: '나가기' }))) return;
     }
@@ -81,7 +95,7 @@ class TalkRunner {
     if (e.kind !== 'progress' || !e.remote) return;
     if (e.type === 'delete') { toast('다른 기기에서 이 기록을 끝냈어요'); go('/talk'); return; }
     if (e.row?.data?.type !== 'talk' || e.row.data._at === this.myAt) return;
-    if (this.recorder.recording || this.busyAi) { toast('다른 기기에서 진행 상태가 바뀌었어요. 지금 작업을 마치면 이 기기 기준으로 저장돼요.'); return; }
+    if (this.recorder.active || this.busyAi) { toast('다른 기기에서 진행 상태가 바뀌었어요. 지금 작업을 마치면 이 기기 기준으로 저장돼요.'); return; }
     this.t = e.row.data;
     toast('다른 기기에서 진행한 내용을 불러왔어요');
     this.render();
@@ -111,7 +125,7 @@ class TalkRunner {
 
   async timeUp() {
     this.t.timeUp = true;
-    if (this.recorder.recording) { await this.stopRecording(true); }
+    if (this.recorder.active) { await this.stopRecording(true); }
     this.save();
     // 받아쓰기 중('waiting')이면 그 흐름이 끝난 뒤 마무리한다
     if (['next', 'ready'].includes(this.t.phase)) this.closing();
@@ -222,37 +236,71 @@ class TalkRunner {
     }));
   }
 
+  // 다음 질문 1개를 만들고, 질문 음성과 (먼저 답할 경우) 다른 지원자 답·음성까지 동시에 준비한다.
+  async makeNextQuestion() {
+    const history = this.history();
+    // 학력 질문에는 꼬리 질문을 한 번 이상 붙인다
+    const lastQ = history[history.length - 1];
+    const eduAsked = history.some((x) => x.category === '학력');
+    const eduFollowed = history.some((x) => x.category === '학력' && x.is_followup);
+    const mustFollowup = !this.conv && lastQ && lastQ.category === '학력' && !lastQ.is_followup && !eduFollowed;
+    const counts = {};
+    history.forEach((x) => { counts[x.category] = (counts[x.category] || 0) + 1; });
+    const avoid = Object.entries(counts).filter(([, n]) => n >= 2).map(([c]) => c);
+    if (!this.conv && history.length >= 3 && !eduAsked) avoid.push(...Object.keys(counts).filter((c) => c !== '학력' && !avoid.includes(c)));
+    const prompt = interviewQuestionPrompt({ setting: this.t.setting, history, mustFollowup, avoidCategories: avoid, conversation: this.conv });
+    const res = await runTask({ task: 'interviewQuestion', prompt, schema: QUESTION_SCHEMA, check: (j) => checkQuestion(j, history, this.conv) });
+    const q = res.result;
+    // 2인 그룹: 내가 먼저 답할지 나중에 답할지 질문마다 섞는다
+    const order = this.t.group ? (Math.random() < 0.5 ? 'me-first' : 'other-first') : null;
+    let other = null;
+    await Promise.all([
+      prepare(q.question_ja.trim(), this.vs.interviewer),
+      order === 'other-first' ? this.genOther(q.question_ja.trim()).then((o) => { other = o; }) : null,
+    ]);
+    return { q, order, other };
+  }
+
+  // 미리 만들기 키: 지금 질문과 답한 횟수. '같은 질문 다시'로 답이 바뀌면 미리 만든 질문은 버린다.
+  prefetchKey() {
+    const t = this.curTurn();
+    return t ? `${t.id}:${t.attempts.length}` : 'start';
+  }
+
+  // 연습 모드: 분석 결과를 읽는 동안 다음 질문을 미리 만들어 둔다(진행 상태에 저장 → 다른 기기에서도 씀)
+  prefetchNext() {
+    if (this.real || !this.alive) return;
+    const key = this.prefetchKey();
+    if (this.t.prefetch?.key === key || this.prefetching?.key === key) return;
+    const p = this.makeNextQuestion()
+      .then((r) => {
+        if (this.alive && this.prefetchKey() === key && !this.ended) { this.t.prefetch = { key, ...r }; this.save(); }
+        return r;
+      })
+      .catch((e) => { console.warn('다음 질문 미리 만들기 실패', e); return null; });
+    this.prefetching = { key, p };
+  }
+
   async generateNext() {
     if (this.real && this.remaining() <= 0) { this.closing(); return; }
     this.generating = true;
     try {
-      const history = this.history();
-      // 학력 질문에는 꼬리 질문을 한 번 이상 붙인다
-      const lastQ = history[history.length - 1];
-      const eduAsked = history.some((x) => x.category === '학력');
-      const eduFollowed = history.some((x) => x.category === '학력' && x.is_followup);
-      const mustFollowup = !this.conv && lastQ && lastQ.category === '학력' && !lastQ.is_followup && !eduFollowed;
-      const counts = {};
-      history.forEach((x) => { counts[x.category] = (counts[x.category] || 0) + 1; });
-      const avoid = Object.entries(counts).filter(([, n]) => n >= 2).map(([c]) => c);
-      if (!this.conv && history.length >= 3 && !eduAsked) avoid.push(...Object.keys(counts).filter((c) => c !== '학력' && !avoid.includes(c)));
-      const prompt = interviewQuestionPrompt({ setting: this.t.setting, history, mustFollowup, avoidCategories: avoid, conversation: this.conv });
-      let res;
-      for (let i = 0; i < 2; i++) {
-        res = await runTask({ task: 'interviewQuestion', prompt, schema: QUESTION_SCHEMA, check: (j) => checkQuestion(j, history, this.conv) });
-        if (res.result) break;
-      }
-      const q = res.result;
+      // 미리 만든 질문이 있으면 바로 끝나므로, 지금 그리는 '고르는 중' 화면이 먼저 끝나게 한 박자 쉰다
+      await Promise.resolve();
+      const key = this.prefetchKey();
+      let r = null;
+      if (this.t.prefetch?.key === key) r = this.t.prefetch;
+      else if (this.prefetching?.key === key) r = await this.prefetching.p;
+      this.t.prefetch = null;
+      this.prefetching = null;
+      if (!r) r = await this.makeNextQuestion();
       if (!this.alive || (this.real && this.t.timeUp)) return;
+      const { q } = r;
       const turn = this.addTurn({ question_ja: q.question_ja.trim(), question_ko: q.question_ko, category: q.category, is_followup: !!q.is_followup });
-      // 2인 그룹: 내가 먼저 답할지 나중에 답할지 질문마다 섞는다
-      turn.order = this.t.group ? (Math.random() < 0.5 ? 'me-first' : 'other-first') : null;
+      turn.order = r.order;
+      if (r.other) turn.other = r.other;
+      else if (r.order === 'other-first') turn.order = null; // 다른 지원자 답을 못 만들었으면 혼자 답한다
       this.t.phase = 'ready';
-      turn.asked = false;
-      this.save();
-      await prepare(turn.question_ja, this.vs.interviewer);
-      if (turn.order === 'other-first') await this.makeOther(turn);
-      if (!this.alive) return;
       turn.asked = true;
       this.save();
       this.render();
@@ -262,21 +310,26 @@ class TalkRunner {
     }
   }
 
-  async makeOther(turn, myAnswer = '') {
-    const otherHistory = this.t.turns.filter((x) => x.other?.answer_ja && x !== turn).map((x) => x.other.answer_ja);
+  // 다른 지원자의 답을 만들고 음성까지 준비한다. 실패하면 null.
+  async genOther(question, myAnswer = '') {
+    const otherHistory = this.t.turns.filter((x) => x.other?.answer_ja).map((x) => x.other.answer_ja);
     try {
       const res = await runTask({
         task: 'otherCandidate',
-        prompt: otherCandidatePrompt({ persona: this.t.persona, question: turn.question_ja, setting: this.t.setting, myAnswer, history: otherHistory }),
+        prompt: otherCandidatePrompt({ persona: this.t.persona, question, setting: this.t.setting, myAnswer, history: otherHistory }),
         schema: OTHER_SCHEMA, check: checkOther,
       });
-      turn.other = res.result;
-      await prepare(turn.other.answer_ja, this.vs.other);
+      await prepare(res.result.answer_ja, this.vs.other);
+      return res.result;
     } catch (e) {
       console.warn(e);
-      turn.other = null;
       toast('다른 지원자 답을 만들지 못해 이번 질문은 혼자 답해요');
+      return null;
     }
+  }
+
+  async makeOther(turn, myAnswer = '') {
+    turn.other = await this.genOther(turn.question_ja, myAnswer);
   }
 
   async playQuestion(turn, rate = 1) {
@@ -298,12 +351,12 @@ class TalkRunner {
   /* ---------- 내 답 녹음 ---------- */
   answerView() {
     const turn = this.curTurn();
-    const recording = this.recorder.recording;
+    const recording = this.recorder.active;
     const replayBtn = h('button', { type: 'button', class: 'plain small', disabled: recording, onclick: () => { unlock(); turn.replays++; this.save(); replayCount.textContent = `다시 듣기 ${turn.replays}회`; this.playQuestion({ ...turn, order: null }); } }, icon('refresh', 16), '다시 듣기');
     const slowBtn = h('button', { type: 'button', class: 'plain small', disabled: recording, onclick: () => { unlock(); turn.slowReplays++; turn.replays++; this.save(); replayCount.textContent = `다시 듣기 ${turn.replays}회`; this.playQuestion({ ...turn, order: null }, 0.8); } }, icon('slow', 16), '느리게 (0.8배)');
     const replayCount = h('span', { class: 'muted small' }, `다시 듣기 ${turn.replays}회`);
     const micBtn = h('button', { type: 'button', class: ['mic-btn', recording && 'rec'], 'aria-label': recording ? '녹음 끝내기' : '녹음 시작' }, icon(recording ? 'stop' : 'mic', 34));
-    micBtn.addEventListener('click', () => (this.recorder.recording ? this.stopRecording() : this.startRecording()));
+    micBtn.addEventListener('click', () => (this.recorder.active ? this.stopRecording() : this.startRecording()));
     const level = h('div', { class: 'level' }, h('i'));
     this.levelBar = level.firstChild;
     this.recTimerEl = h('div', { class: 'timer-big', style: { fontSize: '1.6em' } }, recording ? mmss((Date.now() - this.recStart) / 1000) : '00:00');
@@ -429,7 +482,8 @@ class TalkRunner {
     try {
       const res = await runTask({
         task: 'transcribe', prompt: transcribePrompt(attempt.seconds),
-        media: [{ mimeType: 'audio/wav', data: await blobToBase64(wav) }],
+        // 보관함에 올린 녹음을 서버가 꺼내 쓴다(실패하면 이 기기의 녹음을 직접 보냄)
+        media: [{ mimeType: 'audio/wav', path: attempt.audio, blob: wav }],
         schema: TRANSCRIBE_SCHEMA, check: checkTranscribe, cacheKey: attempt.key,
       });
       attempt.heard = res.result.transcript || '';
@@ -473,6 +527,7 @@ class TalkRunner {
     const done = btn ? busy(btn, '분석 중… (10~30초)') : () => {};
     this.t.phase = 'analyzing';
     this.save();
+    this.prefetchNext(); // 분석하는 동안·결과를 읽는 동안 다음 질문을 미리 만든다
     try {
       await this.analyze(turn, at);
       this.t.phase = 'result';
@@ -488,7 +543,6 @@ class TalkRunner {
   }
 
   async analyze(turn, at, fresh = false) {
-    const wav = this.wavs?.get(at.audio) || await db.download(at.audio);
     const otherAnswer = turn.order === 'other-first' ? turn.other?.answer_ja : '';
     const res = await runTask({
       task: 'interviewAnalyze',
@@ -496,7 +550,7 @@ class TalkRunner {
         setting: this.t.setting, question: turn.question_ja, heard: at.heard, answer: at.answer,
         seconds: at.seconds, targetSeconds: this.target, otherAnswer, conversation: this.conv,
       }),
-      media: [{ mimeType: 'audio/wav', data: await blobToBase64(wav) }],
+      media: [{ mimeType: 'audio/wav', path: at.audio, blob: this.wavs?.get(at.audio) }],
       schema: INTERVIEW_ANALYZE_SCHEMA,
       check: (j) => checkInterviewAnalysis(j, at.answer),
       cacheKey: `${at.key}|${await blobKey(new Blob([at.answer + '|' + turn.question_ja + '|' + otherAnswer + '|' + this.target]))}`,
@@ -519,6 +573,7 @@ class TalkRunner {
   resultView() {
     const turn = this.curTurn();
     const at = lastAttempt(turn);
+    this.prefetchNext(); // 다른 기기에서 이어 열었을 때도 미리 만들기
     const reBtn = h('button', { type: 'button', class: 'ghost small' }, icon('refresh', 14), '다시 분석');
     reBtn.addEventListener('click', async () => {
       if (this.busyAi) return;
@@ -641,7 +696,7 @@ class TalkRunner {
 
   /* ---------- 종료·저장 ---------- */
   async finish() {
-    if (this.recorder.recording) { toast('녹음을 먼저 끝내 주세요'); return; }
+    if (this.recorder.active) { toast('녹음을 먼저 끝내 주세요'); return; }
     const turns = this.t.turns.filter((x) => lastAttempt(x));
     if (!turns.length) {
       if (await confirmDialog('답한 질문이 없어요. 저장하지 않고 끝낼까요?', { ok: '끝내기' })) { this.ended = true; stopAll(); db.clearProgress('talk'); go('/talk'); }
