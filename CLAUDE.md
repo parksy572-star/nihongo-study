@@ -22,6 +22,7 @@
 ## 핵심 규칙
 
 - **데이터**: Supabase `public.items` 한 표에 `kind`(`word`·`kanji`·`grammar`·`preset`·`session`·`writing`·`log`·`settings`)와 `data`(jsonb)로 저장. RLS로 본인 행만 접근. 파일(녹음·작문 사진·TTS 캐시)은 Storage `media/<user_id>/...`. PC·휴대폰 동기화는 Realtime(`postgres_changes`)으로 한다.
+- **기기 간 동기화(필수)**: 기기마다 달라야 하는 것(기기 내장 음성 선택, 마이크 권한, 화면 배치)을 뺀 **모든 것**을 서버에 저장하고 PC·휴대폰에 실시간 반영한다. 학습 데이터뿐 아니라 AI 분석 결과(입력 녹음·사진·글과 연결해 저장, 같은 입력은 어느 기기에서든 저장된 결과 재사용), 진행 중인 단어 테스트·면접 세션·작문 초안, 학습 기록, 설정까지 포함. 결과를 브라우저 메모리나 localStorage에만 두지 않는다(localStorage는 오프라인 임시 사본 용도만). 긴 글은 동시 수정 시 덮어쓰기 전에 알린다. 기능마다 '다른 기기에서 열면 그대로 보이고 이어서 할 수 있는가'를 확인한다. 자세한 표는 기획서 '데이터 구조 > 기기 간 동기화'.
 - **AI**: 브라우저는 `/api/gemini`로만 Gemini를 부른다(키 노출 금지). 무료 등급 모델만 쓴다(`ai-rules.js`·`app.js`의 무료 모델 목록). 분석·교정은 temperature 0, 응답은 `responseSchema`로 고정, 결과는 사이트에서 한 번 더 검사한 뒤 보여준다. 같은 입력은 캐시 결과 재사용, 실행 중 버튼 잠금.
 - **음성**: 듣기는 Gemini TTS(기본 Kore)를 쓰고 생성한 음성은 `media/<uid>/tts/<sha256>.wav`에 캐시. 아이폰은 버튼을 누른 순간 오디오를 한 번 재생(unlock)해야 이후 재생이 된다.
 - **한자 정보**: 일본 한자 기준. 데이터는 KANJIDIC2(CC BY-SA 4.0), 획순은 KanjiVG(CC BY-SA 3.0) — 출처 표기 유지. nihongokanji.com은 **링크만** 건다(이용 안내상 스크래핑·내용 복제 금지). 네이버 일본어사전도 링크로만 연결.
