@@ -1,5 +1,5 @@
 // 사진 도구: 불러오기 → 회전·자르기(원고지 칸 맞춤선) → 1~2MB JPEG로 줄이기 → AI용 조각 만들기
-import { h, icon, modal, toast } from './core.js';
+import { h, icon, modal } from './core.js';
 
 export async function loadImage(blob) {
   const url = URL.createObjectURL(blob);
@@ -195,4 +195,3 @@ export async function zoomRegion(blob, rect, title, detail) {
   URL.revokeObjectURL(url);
 }
 
-export { toast };

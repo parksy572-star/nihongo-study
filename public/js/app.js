@@ -24,6 +24,7 @@ route('/test', lazy('./views/test.js', 'testHomeView'));
 route('/test/run', lazy('./views/test.js', 'testRunView'));
 route('/grammar', lazy('./views/grammar.js', 'grammarView'));
 route('/grammar/new', lazy('./views/grammar.js', 'grammarFormView'));
+route('/grammar/review', lazy('./views/grammar.js', 'grammarReviewView'));
 route('/grammar/edit/:id', lazy('./views/grammar.js', 'grammarFormView'));
 route('/grammar/:id', lazy('./views/grammar.js', 'grammarDetailView'));
 route('/talk', lazy('./views/talk.js', 'talkHomeView'));

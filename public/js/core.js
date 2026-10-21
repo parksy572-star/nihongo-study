@@ -356,21 +356,6 @@ export function similarity(a, b) {
   return (2 * inter) / total;
 }
 
-// 편집 거리 기반 일치율 (발음 평가에서 목표 문장과의 일치율)
-export function matchRate(heard, target) {
-  const clean = (s) => [...String(s || '').replace(/[\s、。，．,.!?！？「」『』（）()・…〜~？]/g, '')];
-  const a = clean(heard), b = clean(target);
-  if (!b.length) return a.length ? 0 : 1;
-  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i]);
-  for (let j = 1; j <= b.length; j++) dp[0][j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    }
-  }
-  return Math.max(0, 1 - dp[a.length][b.length] / Math.max(a.length, b.length));
-}
-
 export function segmented(options, value, onChange, { small = false } = {}) {
   const wrap = h('div', { class: ['seg', small && 'small'], role: 'radiogroup' });
   const render = (v) => {

@@ -3,7 +3,7 @@
 // 읽기는 Gemini(Flash-Lite)로 문장 묶음 단위로 만들고, 문장마다 ai 행에 저장해 어느 기기에서든 다시 쓴다.
 // 단어장의 '가리기'·단어 테스트처럼 읽기를 맞히는 곳에는 쓰지 않는다(정답이 미리 보이지 않게).
 
-import { h, sha256, store, bus, hasKanji, debounce } from './core.js';
+import { h, sha256, store, bus, hasKanji, debounce, isKanjiChar } from './core.js';
 import { db } from './db.js';
 import { runTask } from './ai.js';
 import { furiganaPrompt, FURIGANA_SCHEMA, checkFurigana } from '../ai-rules.js';
@@ -20,20 +20,25 @@ const saveLocal = debounce(() => {
 
 export const furiganaOn = () => db.settings().furigana !== false;
 
-export function rubyNodes(markup) {
-  return parseRuby(markup).map((x) => (x.r ? h('ruby', null, x.t, h('rt', null, x.r)) : x.t));
+// kanjiClick: 한자를 누르면 한자 정보 창 (문법 예문 등)
+const kanjiSpans = (t) => [...t].map((c) => (isKanjiChar(c) ? h('span', { class: 'k', onclick: (e) => { e.stopPropagation(); import('./kanji.js').then((m) => m.openKanji(c)); } }, c) : c));
+export function rubyNodes(markup, kanjiClick = false) {
+  const base = (t) => (kanjiClick ? kanjiSpans(t) : t);
+  return parseRuby(markup).flatMap((x) => (x.r ? [h('ruby', null, base(x.t), h('rt', null, x.r))] : [].concat(base(x.t))));
 }
 
 function paint(el) {
   const text = el.dataset.text;
   const ruby = furiganaOn() ? mem.get(text) : null;
-  el.replaceChildren(...(ruby ? rubyNodes(ruby) : [text]));
+  const click = el.dataset.kclick === '1';
+  el.replaceChildren(...(ruby ? rubyNodes(ruby, click) : (click ? kanjiSpans(text) : [text])));
 }
 
 /** 일본어 글에 후리가나를 붙인 요소 */
-export function furi(text, { cls = '', tag = 'span' } = {}) {
+export function furi(text, { cls = '', tag = 'span', kanjiClick = false } = {}) {
   text = String(text ?? '');
-  const el = h(tag, { class: ['jp-auto', cls], lang: 'ja', dataset: { text } }, text);
+  const el = h(tag, { class: ['jp-auto', cls], lang: 'ja', dataset: { text, kclick: kanjiClick ? '1' : '0' } }, text);
+  if (kanjiClick) paint(el);
   if (!hasKanji(text)) return el;
   if (mem.has(text)) { paint(el); return el; }
   if (!furiganaOn()) return el;

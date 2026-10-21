@@ -1,7 +1,7 @@
 // 한자 정보: 일본 한자 기준 데이터(KANJIDIC2·KanjiVG·常用漢字表) + 내가 입력한 훈음·메모·링크(kanji 행, 동기화)
 // openKanji(ch): 화면 아래에서 올라오는 한자 정보 창
 
-import { h, icon, openSheet, toast, copyText, go, replace, debounce, isKanjiChar } from './core.js';
+import { h, icon, openSheet, toast, copyText, go, debounce, isKanjiChar } from './core.js';
 import { db } from './db.js';
 import { speak } from './tts.js';
 
@@ -209,4 +209,3 @@ export function kanjiClickable(text, cls = '') {
     : c)));
 }
 
-export { replace };

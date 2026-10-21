@@ -1,8 +1,8 @@
-# 일본어 공부방
+# 나만의 일본어 공부
 
 나만의 일본어 공부 사이트. 단어장 · 단어 테스트 · 문법 노트 · 회화/면접(AI) · 작문(AI).
 
-- 화면: `public/` (빌드 없이 그대로 배포되는 정적 파일)
+- 화면: `public/` (빌드 없이 그대로 배포되는 정적 파일, 진입점 `public/js/app.js`)
 - AI 중계: `src/worker.js`, `src/gemini.js` (Cloudflare Worker, Gemini API 키를 숨김)
 - Worker 설정: `wrangler.jsonc`
 - 데이터베이스 설정: `supabase/schema.sql`

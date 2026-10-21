@@ -249,7 +249,7 @@ function runReview(el, state, ctx) {
     deck.answer(known); save(); draw();
   };
   const onKey = (e) => {
-    if (e.target.closest('input,textarea')) return;
+    if (e.target?.closest?.('input,textarea')) return;
     if (e.key === 'ArrowRight') mark(true);
     else if (e.key === 'ArrowLeft') mark(false);
     else if (e.key === 'z' || e.key === 'Z') { if (deck.undo()) { save(); draw(); } }
