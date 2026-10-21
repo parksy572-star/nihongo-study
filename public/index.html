@@ -91,13 +91,13 @@
 
       <article class="panel" id="aiCard">
         <h2>4. Gemini</h2>
-        <p class="muted">모델을 불러온 뒤, 글자 테스트와 방금 녹음한 발음 분석을 해 보세요.</p>
+        <p class="muted">모델을 불러온 뒤 <b>연결 테스트</b>로 Gemini가 답하는지 확인하고(면접 질문 예시가 나와요), <b>녹음 발음 분석</b>으로 3번의 녹음을 분석해 보세요.</p>
         <div class="row wrap">
           <button id="aiModels" class="ghost">모델 불러오기</button>
           <select id="aiModel" aria-label="모델" disabled><option>먼저 모델을 불러오세요</option></select>
         </div>
         <div class="row wrap">
-          <button id="aiText" disabled>글자 테스트</button>
+          <button id="aiText" class="ghost" disabled>연결 테스트</button>
           <button id="aiAudio" disabled>녹음 발음 분석</button>
         </div>
         <div class="result" id="aiOut" hidden></div>

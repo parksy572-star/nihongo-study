@@ -599,6 +599,113 @@ $('aiText').addEventListener('click', async () => {
   }
 });
 
+/* 발음 분석 결과: 글로 보는 것과 함께 소리로 비교해 듣는다. */
+function listenButton(label, play) {
+  const b = document.createElement('button');
+  b.className = 'ghost small';
+  b.textContent = '▶ ' + label;
+  b.onclick = async () => {
+    if (b.disabled) return;
+    unlockAudio();
+    b.disabled = true;
+    const old = b.textContent;
+    b.textContent = '… ' + label;
+    try { await play(); } catch (err) { msg($('aiMsg'), '재생 실패: ' + (err?.message || err), 'err'); }
+    finally { b.disabled = false; b.textContent = old; }
+  };
+  return b;
+}
+
+function stopAllAudio() {
+  try { ttsAudio.pause(); } catch {}
+  try { $('micAudio').pause(); } catch {}
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+}
+
+function playMine(wav) {
+  stopAllAudio();
+  const a = $('micAudio');
+  if (!a.src || a.dataset.blobSize !== String(wav.size)) {
+    if (a.src.startsWith('blob:')) URL.revokeObjectURL(a.src);
+    a.src = URL.createObjectURL(wav);
+    a.dataset.blobSize = String(wav.size);
+  }
+  a.currentTime = 0;
+  return a.play().then(() => new Promise((r) => { a.onended = r; }));
+}
+
+const sayJa = (text) => { stopAllAudio(); return speak(text, Number($('ttsRate').value) || 1); };
+
+function renderPronunciation(j, chk, target, wav) {
+  const out = $('aiOut');
+  out.textContent = '';
+
+  const box = document.createElement('div');
+  box.className = 'listen';
+  const cap = document.createElement('p');
+  cap.className = 'cap';
+  cap.textContent = '비교해서 듣기';
+  const row = document.createElement('div');
+  row.className = 'row wrap';
+  row.append(
+    listenButton('모범 발음', () => sayJa(target)),
+    listenButton('내 녹음', () => playMine(wav)),
+    listenButton('AI가 들은 대로', () => sayJa(j.transcript_kana || j.transcript)),
+  );
+  box.append(cap, row);
+  const hint = document.createElement('p');
+  hint.className = 'cap';
+  hint.textContent = "'AI가 들은 대로'는 AI가 받아 적은 글자를 그대로 읽어 줘요. 모범 발음과 다르게 들리는 곳이 고칠 부분이에요.";
+  box.append(hint);
+  out.append(box);
+
+  const dl = document.createElement('dl');
+  const add = (k, v, jp) => {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd'); dd.textContent = v ?? ''; if (jp) dd.className = 'jp';
+    dl.append(dt, dd);
+  };
+  add('목표 문장', target, true);
+  add('들린 문장', j.transcript || '(인식된 말 없음)', true);
+  add('목표 문장과 일치율', chk.score === null ? '—' : `${chk.score}%`);
+  out.append(dl);
+
+  const dt = document.createElement('dt');
+  dt.textContent = '발음 지적';
+  out.append(dt);
+  const ul = document.createElement('ul');
+  ul.className = 'issues';
+  const issues = j.issues || [];
+  if (!issues.length) {
+    const li = document.createElement('li');
+    li.textContent = '특별히 고칠 점 없음';
+    ul.append(li);
+  }
+  for (const i of issues) {
+    const li = document.createElement('li');
+    const t = document.createElement('div');
+    t.innerHTML = '';
+    const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = i.type;
+    const words = document.createElement('span'); words.className = 'jp';
+    words.textContent = ` ${i.target} → 「${i.heard}」로 들림`;
+    const tip = document.createElement('div'); tip.className = 'tip'; tip.textContent = i.tip;
+    t.append(tag, words, tip);
+    const b = document.createElement('div');
+    b.className = 'row wrap';
+    b.append(listenButton('올바른 발음', () => sayJa(i.target)), listenButton('들린 소리', () => sayJa(i.heard)));
+    li.append(t, b);
+    ul.append(li);
+  }
+  out.append(ul);
+
+  const dl2 = document.createElement('dl');
+  const add2 = (k, v) => { const a = document.createElement('dt'); a.textContent = k; const b = document.createElement('dd'); b.textContent = v ?? ''; dl2.append(a, b); };
+  add2('전체 평가', j.overall);
+  add2('AI 확신도', { high: '높음', medium: '보통', low: '낮음' }[j.confidence] || j.confidence);
+  out.append(dl2);
+  out.hidden = false;
+}
+
 // 같은 녹음을 다시 누르면 같은 결과를 보여 준다(무료 한도 절약·결과 일관성).
 const analysisCache = new Map();
 let aiBusy = false;
@@ -626,13 +733,7 @@ $('aiAudio').addEventListener('click', async () => {
       $('aiOut').hidden = true;
       return msg($('aiMsg'), chk.warnings.join(' '), 'err');
     }
-    showResult([
-      ['들린 문장', j.transcript || '(인식된 말 없음)'],
-      ['목표 문장과 일치율', chk.score === null ? '—' : `${chk.score}%`],
-      ['발음 지적', (j.issues || []).length ? j.issues.map((i) => `[${i.type}] ${i.target} → 「${i.heard}」로 들림. ${i.tip}`) : ['특별히 고칠 점 없음']],
-      ['전체 평가', j.overall],
-      ['AI 확신도', { high: '높음', medium: '보통', low: '낮음' }[j.confidence] || j.confidence],
-    ]);
+    renderPronunciation(j, chk, target, wav);
     const note = chk.warnings.length ? ' 주의: ' + chk.warnings.join(' ') : '';
     msg($('aiMsg'), (fromCache ? '같은 녹음이라 이전 분석 결과를 다시 보여줘요.' : '발음 분석 완료.') + note, chk.warnings.length ? 'err' : 'ok');
     check('ai', true);

@@ -140,3 +140,11 @@ main > *, .panel > *, .row > * { min-width: 0; }
 select { max-width: 100%; text-overflow: ellipsis; }
 .list li { flex-wrap: wrap; }
 .list li .meta { white-space: normal; }
+
+/* 발음 분석 결과 */
+.listen { display: grid; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.cap { margin: 0; font-size: 12px; color: var(--muted); }
+.issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.issues li { display: grid; gap: 6px; padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
+.issues .tip { font-size: 14px; color: var(--muted); margin-top: 2px; }
+.tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
