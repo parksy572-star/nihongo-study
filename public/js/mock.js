@@ -20,6 +20,17 @@ const CONV = [
   ['ほかの色もございますが、ご覧になりますか。', '다른 색도 있는데 보시겠어요?'],
 ];
 
+const DICT = {
+  面接: 'めんせつ', 自己紹介: 'じこしょうかい', 一人: 'ひとり', 分: 'ぷん', 願: 'ねが', 数: 'かず', 学校: 'がっこう', 中: 'なか',
+  文化服装学院: 'ぶんかふくそうがくいん', 選: 'えら', 韓国: 'かんこく', 学士: 'がくし', 取得: 'しゅとく', 方法: 'ほうほう', 学: 'まな',
+  私: 'わたし', 勉強: 'べんきょう', 制度: 'せいど', 単位銀行制度: 'たんいぎんこうせいど', 働: 'はたら', 積: 'つ', 重: 'かさ', 学位: 'がくい',
+  得: 'え', 学士号: 'がくしごう', 時間: 'じかん', 終: 'お', 疲: 'つか', 入: 'はい', 将来: 'しょうらい', 夢: 'ゆめ', 自分: 'じぶん',
+  作: 'つく', 服飾: 'ふくしょく', 舞台衣装: 'ぶたいいしょう', 経験: 'けいけん', 立体裁断: 'りったいさいだん', 技術: 'ぎじゅつ', 足: 'た',
+  感: 'かん', 年: 'ねん', 基礎: 'きそ', 考: 'かんが', 書: 'か', 台湾: 'たいわん', 参: 'まい', 林: 'りん', 申: 'もう', 台北: 'たいぺい',
+  大学: 'だいがく', 興味: 'きょうみ', 持: 'も', 志望: 'しぼう', 先生: 'せんせい', 話: 'はなし', 聞: 'き', 画面: 'がめん', 音声: 'おんせい',
+  始: 'はじ', 本日: 'ほんじつ', 失礼: 'しつれい', 退出: 'たいしゅつ', 問題: 'もんだい',
+};
+
 function questionCount(prompt) {
   return (prompt.match(/^Q\d+\[/gm) || []).length;
 }
@@ -132,6 +143,18 @@ export async function mockGemini(body) {
     case 'wordDraft': {
       const word = (/\[단어\] (.+)/.exec(prompt) || [])[1] || '';
       return wrap({ furigana: 'つぐ', meaning: '잇다, 이어받다', level: 'N3', pos: '1그룹 동사', example_ja: '父の仕事を継いだ。', example_ruby: '[父|ちち]の[仕事|しごと]を[継|つ]いだ。', example_ko: '아버지의 일을 이어받았다.', example_mark: '継いだ', _word: word });
+    }
+    case 'furigana': {
+      const texts = [...prompt.matchAll(/^(\d+): (.*)$/gm)].map((m) => m[2]);
+      const words = Object.keys(DICT).sort((a, b) => b.length - a.length);
+      return wrap({ items: texts.map((t, i) => {
+        let out = '';
+        for (let k = 0; k < t.length;) {
+          const w = words.find((x) => t.startsWith(x, k));
+          if (w) { out += `[${w}|${DICT[w]}]`; k += w.length; } else { out += t[k]; k++; }
+        }
+        return { i, ruby: out };
+      }) });
     }
     default:
       return wrap({});

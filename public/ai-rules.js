@@ -35,6 +35,7 @@ export const TASKS = {
   writingOcr:        { tier: 'flash', temperature: 0 },
   writingAnalyze:    { tier: 'flash', temperature: 0 },
   wordDraft:         { tier: 'lite', temperature: 0 },
+  furigana:          { tier: 'lite', temperature: 0 },
 };
 
 /* ---------- 공통 검사 도구 ---------- */
@@ -198,7 +199,7 @@ export function interviewQuestionPrompt({ setting, history, mustFollowup, avoidC
   return [
     COMMON_RULES,
     '',
-    `[역할] ${setting.school || '일본 전문학교'} ${setting.dept || ''} 입시 면접관. 형식: ${setting.group ? '2인 1조 집단 면접(지원자 2명에게 같은 질문)' : '1:1 면접'}.`,
+    `[역할] ${setting.school || '일본 전문학교'} ${setting.dept || ''} 입시 면접관. 형식: ${setting.place === '대면' ? '대면' : '화상(온라인) '}${setting.group ? '2인 1조 집단 면접(지원자 2명에게 같은 질문)' : '1:1 면접'}.`,
     `[지원자 이력 요약] ${setting.resume || '(없음)'}`,
     `[말투] 면접관은 정중체로 묻는다. 지원자는 ${setting.tone || '정중체·경어'}로 답한다.`,
     `[질문 범주] ${INTERVIEW_CATEGORIES.join(' / ')}`,
@@ -231,7 +232,7 @@ export const OTHER_SCHEMA = OBJ({ answer_ja: S(), answer_ko: S() });
 
 export function otherCandidatePrompt({ persona, question, setting, myAnswer, history }) {
   return [
-    '[역할] 일본 전문학교 입시 집단 면접에서 학습자와 같은 조인 다른 지원자 역할을 한다.',
+    `[역할] 일본 전문학교 입시 ${setting.place === '대면' ? '' : '화상(온라인) '}집단 면접에서 학습자와 같은 조인 다른 지원자 역할을 한다.`,
     `[다른 지원자 설정] ${persona}`,
     `[학교·학과] ${setting.school || ''} ${setting.dept || ''}`,
     history.length ? `[이 지원자가 앞에서 한 답]\n${history.map((t) => '- ' + t).join('\n')}` : '',
@@ -284,7 +285,7 @@ export function interviewAnalyzePrompt({ setting, question, heard, answer, secon
     '',
     conversation
       ? `[역할] 일본어 회화 코치. 장면: ${setting.scene || ''}. 말투: ${setting.tone || '정중체'}.`
-      : `[역할] ${setting.school || ''} ${setting.dept || ''} 입시 면접 코치. 기준 경어: 면접 수준(です・ます + 겸양어).`,
+      : `[역할] ${setting.school || ''} ${setting.dept || ''} 입시 면접 코치. 기준 경어: 면접 수준(です・ます + 겸양어).${setting.place === '대면' ? '' : ' 형식: 화상(온라인) 면접 — 마이크로 전달되는 또렷함, 조금 느린 속도, 말끝까지 분명한지를 특히 본다.'}`,
     `[질문] ${question}`,
     `[AI가 녹음에서 받아 적은 그대로] ${heard || '(없음)'}`,
     `[학습자가 확인·수정한 답변 원문] ${answer}`,
@@ -433,7 +434,7 @@ export function writingAnalyzePrompt({ question, text, gridText, paper, visualRu
     '[역할] 한국인 학습자의 손글씨 일본어 작문을 교정한다. 첨부 사진이 원본이고, 아래 글은 학습자가 확인한 읽기 결과다.',
     `[질문] ${question}`,
     `[읽은 글]\n${text}`,
-    grid ? `[원고지 칸 위치]\n${gridText}` : '',
+    grid ? `[원고지 칸 위치] 줄마다 글자 하나가 한 칸(빈 칸은 전각 공백 「　」, [ ]로 묶인 것은 두 글자가 든 한 칸). 칸 번호는 1부터.\n${gridText}` : '',
     '',
     '[해야 할 일]',
     '1. question_ko, answer_ko: 질문과 읽은 글의 한국어 해석.',
@@ -502,4 +503,38 @@ export function checkWordDraft(j) {
   if (j.example_mark && j.example_ja && !j.example_ja.includes(j.example_mark)) j.example_mark = '';
   warnings.push('JLPT 레벨은 AI 추정이에요.');
   return { ok: true, warnings };
+}
+
+/* ---------- 후리가나 (모든 한자 위에 히라가나) ---------- */
+
+export const FURIGANA_SCHEMA = OBJ({ items: ARR(OBJ({ i: { type: 'INTEGER' }, ruby: S() })) });
+
+export function furiganaPrompt(texts) {
+  return [
+    COMMON_RULES,
+    '',
+    '[역할] 일본어 초보 학습자를 위해 아래 일본어 문장의 모든 한자에 읽기(히라가나)를 붙인다.',
+    '- 형식: [漢字|かんじ] 처럼 한자 부분만 대괄호로 묶고 | 뒤에 히라가나 읽기. 가나·숫자·기호는 그대로 둔다.',
+    '- 문맥에 맞는 읽기를 쓴다. 숙어는 묶어서 [今日|きょう]처럼, 오쿠리가나는 괄호 밖에 둔다: [学|まな]びました.',
+    '- 원문 글자를 하나도 바꾸거나 빼거나 더하지 않는다(틀린 한자가 있어도 그대로 두고 쓴 모양대로 읽는다).',
+    '- items: 각 문장마다 {i: 번호, ruby: 표기}.',
+    '',
+    ...texts.map((t, i) => `${i}: ${t}`),
+  ].join('\n');
+}
+
+const plainOf = (ruby) => String(ruby || '').replace(/\[([^|\]]+)\|[^\]]*\]/g, '$1');
+export function checkFurigana(j, texts) {
+  if (!j || !Array.isArray(j.items)) return { ok: false, warnings: ['후리가나 형식 오류'] };
+  const ok = {};
+  for (const it of j.items) {
+    const src = texts[it.i];
+    if (src == null || typeof it.ruby !== 'string') continue;
+    if (plainOf(it.ruby) !== src) continue;                       // 원문이 바뀌면 버린다
+    const readings = [...it.ruby.matchAll(/\[[^|\]]+\|([^\]]*)\]/g)].map((m) => m[1]);
+    if (readings.some((r) => !/^[ぁ-ゖー]+$/.test(r))) continue; // 히라가나만
+    ok[it.i] = it.ruby;
+  }
+  j.valid = ok;
+  return { ok: true, warnings: [] };
 }

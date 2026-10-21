@@ -4,6 +4,7 @@ import { db } from '../db.js';
 import { viewToggle, viewMode, targetSeconds } from '../prefs.js';
 import { DEFAULT_INTERVIEW, SCENES, TONES, presets, newTalk, lastAttempt } from '../talk-common.js';
 import { sayBtn } from '../analysis-ui.js';
+import { furi } from '../furigana.js';
 
 export function talkHomeView(_p, query, ctx) {
   const el = h('div', { class: 'stack' });
@@ -54,7 +55,7 @@ function setupPanel() {
           segmented([['interview', '면접'], ['conversation', '회화']], kind, (v) => { kind = v; last.presetId = null; draw(); }),
           kind === 'interview' && segmented([['practice', '연습'], ['real', '실전 10분']], mode, (v) => { mode = v; draw(); })),
         h('p', { class: 'hint' }, kind === 'interview'
-          ? (mode === 'real' ? '10분 타이머가 멈추지 않고 돌아요. 입실 → 인사 → 질문 → 마무리 인사까지 한 번에 하고, 끝난 뒤 문답 전체를 분석해요.'
+          ? (mode === 'real' ? '10분 타이머가 멈추지 않고 돌아요. 접속 인사 → 질문 → 마무리 인사까지 한 번에 하고, 끝난 뒤 문답 전체를 분석해요.'
             : '질문 하나씩 답하고 바로 분석·교정을 받아요. 다음 질문으로 갈지 매번 골라요.')
           : 'AI가 상대역(점원·동료 등)으로 말을 걸어요. 질문은 음성으로만 나와요.'),
         list.length > 0 && h('div', { class: 'stack tight' },
@@ -86,13 +87,13 @@ function interviewForm(p) {
   const dept = h('input', { value: p.dept || '' });
   const resume = h('textarea', { rows: 3 }, p.resume || '');
   let group = p.group !== false;
-  let place = p.place || '대면';
+  let place = p.place === '대면' ? '대면' : '화상';
   let tone = p.tone || '정중체·경어';
   const el = h('div', { class: 'stack' },
     field('학교·회사', school), field('학과·직무', dept),
     h('div', { class: 'row wrap' },
       segmented([[true, '2인 그룹'], [false, '1:1']], group, (v) => { group = v; }),
-      segmented([['대면', '대면'], ['온라인', '온라인']], place, (v) => { place = v; })),
+      segmented([['화상', '화상 면접'], ['대면', '대면']], place, (v) => { place = v; })),
     field('내 말투', segmented([['정중체·경어', '정중체·경어'], ['정중체', '정중체']], tone, (v) => { tone = v; })),
     field('이력 요약', resume, '이름·학교명·연락처는 넣지 마세요(무료 등급은 입력이 Google 제품 개선에 쓰일 수 있어요).'));
   return {
@@ -171,9 +172,9 @@ function sessionCard(r) {
     const a = lastAttempt(t);
     body.append(h('div', { class: 'qa', style: { padding: '8px 0', borderTop: '1px solid var(--line)' } },
       h('div', { class: 'qa-head' }, h('span', { class: 'qa-num' }, i + 1), h('div', { class: 'stack tight grow' },
-        h('span', { class: 'jp' }, t.question_ja), h('span', { class: 'muted small' }, a?.analysis?.question_ko || ''))),
-      a && h('p', { class: 'jp small' }, a.answer),
-      a?.analysis?.refined_ja && h('p', { class: 'jp small', style: { color: 'var(--good)' } }, '→ ', a.analysis.refined_ja)));
+        furi(t.question_ja), h('span', { class: 'muted small' }, a?.analysis?.question_ko || ''))),
+      a && furi(a.answer, { cls: 'small', tag: 'p' }),
+      a?.analysis?.refined_ja && h('p', { class: 'small', style: { color: 'var(--good)' } }, '→ ', furi(a.analysis.refined_ja))));
   });
   body.append(h('button', { type: 'button', class: 'ghost small', onclick: () => go('/talk/session/' + r.id) }, '자세히 보기'));
   return card;
@@ -206,7 +207,7 @@ function watchPanel() {
   if (!all.length) return emptyState('아직 발음 지적이 없어요. 면접 연습을 하면 여러 번 지적된 단어가 여기에 모여요.');
   const row = (w) => h('div', { class: 'item' },
     h('div', { class: 'item-main' },
-      h('span', { class: 'item-title jp' }, w.target, ' ', h('span', { class: 'tag ' + (w.count >= 2 ? 'bad' : 'gray') }, `${w.count}번`)),
+      h('span', { class: 'item-title' }, furi(w.target), ' ', h('span', { class: 'tag ' + (w.count >= 2 ? 'bad' : 'gray') }, `${w.count}번`)),
       h('span', { class: 'item-sub' }, [...w.types].join('·'), ' · 들린 소리: ', h('span', { class: 'jp' }, [...w.heard].slice(0, 3).join(', '))),
       w.tips[0] && h('span', { class: 'item-sub' }, w.tips[0])),
     h('div', { class: 'item-actions' },

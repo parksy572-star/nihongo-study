@@ -86,6 +86,11 @@ async function supabaseBackend() {
       if (error) throw error;
       return data[0] || null;
     },
+    async aiGetMany(keys) {
+      const { data, error } = await sb.from('items').select('id, data').eq('kind', 'ai').in('data->>key', keys);
+      if (error) throw error;
+      return data;
+    },
     subscribe(userId, cb) {
       if (channel) sb.removeChannel(channel);
       channel = sb.channel('items-' + userId)
@@ -145,6 +150,7 @@ function demoBackend() {
     },
     async remove(id) { write(read().filter((r) => r.id !== id)); bc?.postMessage({ type: 'delete', id }); },
     async aiGet(key) { return read().find((r) => r.kind === 'ai' && r.data.key === key) || null; },
+    async aiGetMany(keys) { return read().filter((r) => r.kind === 'ai' && keys.includes(r.data.key)); },
     subscribe(_uid, cb) { listener = cb; setTimeout(() => bus.emit('realtime', 'SUBSCRIBED'), 50); },
     storage: {
       async upload(path, blob) { await idb.set('file:' + path, blob); },
@@ -280,6 +286,18 @@ export const db = {
     if (local) return local.data.result;
     try { const r = await backend.aiGet(key); if (r) { rows.set(r.id, { ...r, kind: 'ai' }); return r.data.result; } } catch { /* 오프라인 */ }
     return null;
+  },
+  // 여러 키를 한 번에 (후리가나처럼 작은 결과가 많을 때)
+  async aiGetMany(keys) {
+    const out = {};
+    const missing = [];
+    for (const k of keys) { const l = db.one('ai', (d) => d.key === k); if (l) out[k] = l.data.result; else missing.push(k); }
+    for (let i = 0; i < missing.length; i += 80) {
+      try {
+        for (const r of await backend.aiGetMany(missing.slice(i, i + 80))) { rows.set(r.id, { ...r, kind: 'ai' }); out[r.data.key] = r.data.result; }
+      } catch { break; }
+    }
+    return out;
   },
   aiSet(key, task, result, model) {
     const r = db.one('ai', (d) => d.key === key);

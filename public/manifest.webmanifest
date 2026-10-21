@@ -1,10 +1,10 @@
 {
-  "name": "일본어 공부방",
-  "short_name": "일본어",
+  "name": "나만의 일본어 공부",
+  "short_name": "일본어 공부",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f7f3f1",
-  "theme_color": "#d9827f",
+  "background_color": "#ffffff",
+  "theme_color": "#ec7f8b",
   "lang": "ko",
   "icons": [
     {
@@ -28,5 +28,5 @@
   ],
   "id": "/",
   "scope": "/",
-  "description": "나만의 일본어 공부방 — 단어장, 면접·작문 연습"
+  "description": "나만의 일본어 공부 — 단어장, 면접·작문 연습"
 }

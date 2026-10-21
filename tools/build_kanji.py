@@ -7,7 +7,7 @@
 # - 常用漢字一覧.wiki : https://ja.wikipedia.org/wiki/常用漢字一覧 (action=raw, CC BY-SA 4.0)
 #   常用漢字表(2010)의 음훈과 대조해 '표외' 읽기를 표시하는 데 쓴다.
 #
-# 결과: 한자를 코드포인트 % 32 로 나눈 32개 파일(00.json ~ 31.json) + radicals.json
+# 결과: 한자를 코드포인트 % 32 로 나눈 32개 파일(00.json ~ 31.json) + radicals.json + joyo.txt(상용한자 2136자)
 import json
 import os
 import re
@@ -223,6 +223,8 @@ def main():
         with open(os.path.join(out_dir, f'{i:02d}.json'), 'w', encoding='utf-8') as f:
             json.dump(s, f, ensure_ascii=False, separators=(',', ':'))
         total += len(s)
+    with open(os.path.join(out_dir, 'joyo.txt'), 'w', encoding='utf-8') as f:
+        f.write(''.join(sorted(joyo)))
     radicals = []
     for chunk in RADICALS.replace('\n', '').split('|'):
         ch, *name = chunk.strip().split(' ')

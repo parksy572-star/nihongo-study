@@ -2,6 +2,7 @@
 import { h, icon, toast } from './core.js';
 import { db } from './db.js';
 import { speak, playBlob, unlock, voiceSettings } from './tts.js';
+import { furi } from './furigana.js';
 
 export function listenBtn(label, play, cls = 'soft small') {
   const b = h('button', { type: 'button', class: cls }, icon('speaker', 16), label);
@@ -36,11 +37,11 @@ export function underlined(text, corrections = []) {
   const out = [];
   let pos = 0;
   for (const m of marks) {
-    if (m.start > pos) out.push(text.slice(pos, m.start));
-    out.push(h('span', { class: 'u-err', title: `교정 ${m.n}` }, text.slice(m.start, m.end), h('sup', { class: 'u-num' }, m.n)));
+    if (m.start > pos) out.push(furi(text.slice(pos, m.start)));
+    out.push(h('span', { class: 'u-err', title: `교정 ${m.n}` }, furi(text.slice(m.start, m.end)), h('sup', { class: 'u-num' }, m.n)));
     pos = m.end;
   }
-  out.push(text.slice(pos));
+  out.push(furi(text.slice(pos)));
   return out;
 }
 
@@ -60,13 +61,13 @@ export function renderAnalysis(turn, attempt, { conversation = false, targetSeco
   for (const w of attempt.warnings || []) wrap.append(h('p', { class: 'note warn' }, w));
 
   wrap.append(sec(conversation ? '상대의 말' : '질문',
-    h('p', { class: 'a-ja', lang: 'ja' }, turn.question_ja),
+    furi(turn.question_ja, { cls: 'a-ja', tag: 'p' }),
     h('p', { class: 'a-ko' }, a.question_ko || turn.question_ko || ''),
     h('div', { class: 'listen-row' }, sayBtn('질문 듣기', turn.question_ja, vs.interviewer))));
 
   if (turn.other?.answer_ja && turn.order === 'other-first') {
     wrap.append(sec('먼저 답한 다른 지원자',
-      h('p', { class: 'a-ja', lang: 'ja' }, turn.other.answer_ja),
+      furi(turn.other.answer_ja, { cls: 'a-ja', tag: 'p' }),
       h('p', { class: 'a-ko' }, turn.other.answer_ko || ''),
       h('div', { class: 'listen-row' }, sayBtn('다시 듣기', turn.other.answer_ja, vs.other))));
   }
@@ -92,7 +93,7 @@ export function renderAnalysis(turn, attempt, { conversation = false, targetSeco
     issues.length
       ? h('ul', { class: 'fix-list' }, issues.map((i) => h('li', null,
         h('div', { class: 'row wrap' }, h('span', { class: ['tag', TYPE_TAG[i.type] || ''] }, i.type),
-          h('span', { class: 'fix-line', lang: 'ja' }, i.target, ' → 「', i.heard, '」로 들림')),
+          h('span', { class: 'fix-line', lang: 'ja' }, furi(i.target), ' → 「', i.heard, '」로 들림')),
         h('p', { class: 'fix-why' }, i.tip),
         h('div', { class: 'listen-row' }, sayBtn('올바른 발음', i.target), sayBtn('들린 소리', i.heard)))))
       : h('p', { class: 'note ok' }, '단어 단위로 다르게 들린 곳은 없었어요.'),
@@ -110,7 +111,7 @@ export function renderAnalysis(turn, attempt, { conversation = false, targetSeco
       ? h('ul', { class: 'fix-list' }, cs.map((c, i) => h('li', null,
         h('div', { class: 'row wrap' }, h('span', { class: 'qa-num' }, i + 1), c.kind && h('span', { class: 'tag gray' }, c.kind),
           !c.found && h('span', { class: 'tag warn', title: '내 답 원문에서 위치를 찾지 못했어요' }, '위치 불명')),
-        h('p', { class: 'fix-line', lang: 'ja' }, h('del', null, c.wrong), ' → ', h('ins', null, c.right)),
+        h('p', { class: 'fix-line', lang: 'ja' }, h('del', null, furi(c.wrong)), ' → ', h('ins', null, furi(c.right))),
         h('p', { class: 'fix-why' }, c.reason),
         h('div', { class: 'listen-row' },
           sayBtn('듣기', c.right),
@@ -119,7 +120,7 @@ export function renderAnalysis(turn, attempt, { conversation = false, targetSeco
       : h('p', { class: 'note ok' }, '고칠 표현이 없었어요.')));
 
   wrap.append(sec('다듬은 답변',
-    h('p', { class: 'a-ja', lang: 'ja' }, a.refined_ja),
+    furi(a.refined_ja, { cls: 'a-ja', tag: 'p' }),
     h('p', { class: 'a-ko' }, a.refined_ko || ''),
     h('div', { class: 'listen-row' }, sayBtn('듣기', a.refined_ja), listenBtn('느리게', () => speak(a.refined_ja, { rate: 0.8 }))),
     h('p', { class: 'hint' }, '다듬은 답변을 매일 소리 내어 읽어 보세요. 기록 > 복습에서 다시 연습할 수 있어요.')));

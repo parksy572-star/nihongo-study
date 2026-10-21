@@ -15,9 +15,10 @@ import {
   interviewAnalyzePrompt, INTERVIEW_ANALYZE_SCHEMA, checkInterviewAnalysis,
   similarity,
 } from '../../ai-rules.js';
-import { SCRIPT, talkTitle, lastAttempt } from '../talk-common.js';
+import { scriptFor, talkTitle, lastAttempt } from '../talk-common.js';
 import { targetSeconds } from '../prefs.js';
 import { renderAnalysis, listenBtn, playRecording } from '../analysis-ui.js';
+import { furi } from '../furigana.js';
 
 export function talkRunView(_p, _q, ctx) {
   const row = db.progress('talk');
@@ -37,6 +38,7 @@ class TalkRunner {
     this.target = targetSeconds();
     this.conv = state.kind === 'conversation';
     this.real = state.mode === 'real';
+    this.script = scriptFor(state.setting);
     this.vs = voiceSettings();
     if (this.vs.other === this.vs.interviewer) this.vs.other = this.vs.interviewer === 'Leda' ? 'Kore' : 'Leda';
     // 녹음 중·처리 중이던 단계에서 다시 열면(새로고침·다른 기기) 안전한 단계로 되돌린다
@@ -169,14 +171,15 @@ class TalkRunner {
   /* ---------- 실전: 입실 전 ---------- */
   lobbyView() {
     return h('div', { class: 'panel stack' },
-      h('h2', null, '실전 10분 모의 면접'),
+      h('h2', null, this.t.setting.place === '대면' ? '실전 10분 모의 면접' : '실전 10분 모의 화상 면접'),
       h('ul', { class: 'muted small', style: { margin: 0, paddingLeft: '18px' } },
-        h('li', null, '입장하면 10분 타이머가 바로 시작되고 중간에 멈추지 않아요.'),
+        h('li', null, '시작하면 10분 타이머가 바로 돌고 중간에 멈추지 않아요.'),
+        ...this.script.lobby.map((x) => h('li', null, x)),
         h('li', null, '질문은 음성으로만 나와요. 다시 듣기·느리게 듣기만 있어요.'),
         this.t.group && h('li', null, '다른 지원자(AI)와 번갈아 답해요. 누가 먼저 답할지는 질문마다 바뀌어요.'),
         h('li', null, `한 답변은 ${this.target}초, 길어도 1분을 넘기지 않는 걸 목표로 하세요.`),
         h('li', null, '시간이 되면 면접관이 마무리 인사를 하고, 끝난 뒤 전체를 분석해요.')),
-      h('button', { type: 'button', class: 'wide', onclick: () => this.enterRoom() }, icon('play', 18), '입장하기 (타이머 시작)'));
+      h('button', { type: 'button', class: 'wide', onclick: () => this.enterRoom() }, icon('play', 18), this.script.enterLabel));
   }
 
   async enterRoom() {
@@ -185,7 +188,7 @@ class TalkRunner {
       toast('마이크를 쓸 수 없어요. 브라우저의 마이크 권한을 허용해 주세요.', 'err', 5000); return;
     }
     this.t.realStart = new Date().toISOString();
-    const turn = this.addTurn({ question_ja: SCRIPT.enter, question_ko: '들어오세요.', category: '인사', scripted: 'enter', hint: SCRIPT.enterHint });
+    const turn = this.addTurn({ question_ja: this.script.enter, question_ko: this.script.enterKo, category: '인사', scripted: 'enter', hint: this.script.enterHint });
     turn.order = null;
     this.t.phase = 'ready';
     this.save();
@@ -312,7 +315,7 @@ class TalkRunner {
       : h('p', { class: 'muted small center' }, turn.order === 'other-first' ? '다른 지원자가 먼저 답했어요. 겹치지 않게 답해 보세요.' : turn.order === 'me-first' ? '이번에는 내가 먼저 답해요.' : (this.conv ? '상대의 말에 대답하세요.' : '질문은 음성으로만 나와요. 답을 마친 뒤 처음 글자로 보여줘요.'));
 
     return h('div', { class: 'panel stack' },
-      h('div', { class: 'row between wrap' }, h('b', null, turn.scripted ? (turn.scripted === 'enter' ? '입실' : '퇴실') : `질문 ${this.t.turns.filter((x) => !x.scripted).indexOf(turn) + 1}`), replayCount),
+      h('div', { class: 'row between wrap' }, h('b', null, turn.scripted ? (turn.scripted === 'enter' ? this.script.enterTitle : this.script.closeTitle) : `질문 ${this.t.turns.filter((x) => !x.scripted).indexOf(turn) + 1}`), replayCount),
       intro,
       !turn.scripted && h('div', { class: 'row wrap', style: { justifyContent: 'center' } }, replayBtn, slowBtn,
         turn.order === 'other-first' && turn.other && h('button', { type: 'button', class: 'plain small', disabled: recording, onclick: () => { unlock(); this.setTalking('other', '답하는 중'); speak(turn.other.answer_ja, { voice: this.vs.other }).then(() => this.setTalking('me', '내 차례')); } }, icon('users', 16), '다른 지원자 답 다시')),
@@ -401,7 +404,7 @@ class TalkRunner {
       if (!this.alive) return;
       if (turn.scripted === 'enter') {
         this.setTalking('ai', '말하는 중');
-        try { await speak(SCRIPT.seat, { voice: this.vs.interviewer }); } catch { /* 무시 */ }
+        try { await speak(this.script.seat, { voice: this.vs.interviewer }); } catch { /* 무시 */ }
       }
       if (turn.scripted === 'close') { this.t.phase = 'review-all'; this.save(); this.render(); return; }
       if (this.t.timeUp || this.remaining() <= 0) { this.closing(); return; }
@@ -547,7 +550,7 @@ class TalkRunner {
     this.save();
     this.render();
     this.setTalking('ai', '말하는 중');
-    try { await speak(SCRIPT.closing, { voice: this.vs.interviewer }); } catch { /* 무시 */ }
+    try { await speak(this.script.closing, { voice: this.vs.interviewer }); } catch { /* 무시 */ }
     this.setTalking('me', '퇴실 인사');
     this.closingNow = false;
   }
@@ -555,14 +558,14 @@ class TalkRunner {
   closingView() {
     return h('div', { class: 'panel stack' },
       h('h2', null, '면접이 끝났어요'),
-      h('p', { class: 'jp' }, SCRIPT.closing),
-      h('p', { class: 'note' }, SCRIPT.closeHint),
+      furi(this.script.closing, { tag: 'p' }),
+      h('p', { class: 'note' }, this.script.closeHint),
       h('div', { class: 'row wrap' },
         h('button', { type: 'button', onclick: () => {
-          const turn = this.addTurn({ question_ja: SCRIPT.closing, question_ko: '시간이 되어 면접을 마칩니다. 수고하셨습니다.', category: '인사', scripted: 'close', hint: SCRIPT.closeHint });
+          const turn = this.addTurn({ question_ja: this.script.closing, question_ko: this.script.closingKo, category: '인사', scripted: 'close', hint: this.script.closeHint });
           turn.order = null;
           this.t.phase = 'ready'; this.save(); this.render();
-        } }, icon('mic', 16), '퇴실 인사 녹음'),
+        } }, icon('mic', 16), '마무리 인사 녹음'),
         h('button', { type: 'button', class: 'ghost', onclick: () => { this.t.phase = 'review-all'; this.save(); this.render(); } }, '건너뛰고 분석으로')));
   }
 

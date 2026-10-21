@@ -11,6 +11,7 @@ import { sessionStats } from './talk.js';
 import { RoundDeck } from '../deck.js';
 import { streakSetting } from '../prefs.js';
 import { kataToHira } from '../kana.js';
+import { furi } from '../furigana.js';
 
 /* ---------------- 기록 상세 ---------------- */
 
@@ -77,7 +78,7 @@ function turnPanel(r, t, i, conv) {
   return h('div', { class: 'panel stack' },
     h('button', { type: 'button', class: 'plain', style: { justifyContent: 'flex-start', whiteSpace: 'normal', textAlign: 'left', height: 'auto' }, onclick: () => { body.hidden = !body.hidden; } },
       h('span', { class: 'qa-num' }, i + 1),
-      h('span', { class: 'stack tight grow' }, h('span', { class: 'jp' }, t.question_ja),
+      h('span', { class: 'stack tight grow' }, furi(t.question_ja),
         h('span', { class: 'muted small' }, [t.category, t.is_followup && '꼬리 질문', at && `${Math.round(at.seconds)}초`, t.replays && `다시 듣기 ${t.replays}회`].filter(Boolean).join(' · ')))),
     body);
 }
@@ -173,10 +174,10 @@ function runReview(el, state, ctx) {
     const p = deck.progress();
     const refined = it.at.analysis?.refined_ja || it.at.answer;
     const reveal = h('div', { class: 'stack', hidden: true },
-      h('section', { class: 'a-sec' }, h('h3', null, '질문'), h('p', { class: 'a-ja' }, it.turn.question_ja), h('p', { class: 'a-ko' }, it.at.analysis?.question_ko || '')),
-      h('section', { class: 'a-sec' }, h('h3', null, '다듬은 답변'), h('p', { class: 'a-ja' }, refined), h('p', { class: 'a-ko' }, it.at.analysis?.refined_ko || ''),
+      h('section', { class: 'a-sec' }, h('h3', null, '질문'), furi(it.turn.question_ja, { cls: 'a-ja', tag: 'p' }), h('p', { class: 'a-ko' }, it.at.analysis?.question_ko || '')),
+      h('section', { class: 'a-sec' }, h('h3', null, '다듬은 답변'), furi(refined, { cls: 'a-ja', tag: 'p' }), h('p', { class: 'a-ko' }, it.at.analysis?.refined_ko || ''),
         h('div', { class: 'listen-row' }, sayBtn('듣기', refined), listenBtn('느리게', () => speak(refined, { rate: 0.8 })))),
-      h('section', { class: 'a-sec' }, h('h3', null, '그때 내 답'), h('p', { class: 'a-ja' }, it.at.answer),
+      h('section', { class: 'a-sec' }, h('h3', null, '그때 내 답'), furi(it.at.answer, { cls: 'a-ja', tag: 'p' }),
         h('div', { class: 'listen-row' }, it.at.audio && listenBtn('그때 녹음', () => playRecording(it.at.audio)))));
     const recBtn = h('button', { type: 'button', class: 'plain' }, icon('mic', 16), '소리 내어 답하기');
     const recMsg = h('p', { class: 'msg' });

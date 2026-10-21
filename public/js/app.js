@@ -85,7 +85,7 @@ function setTop(out) {
   }
   const title = $('#topTitle');
   if (out.title) replace(title, h('span', { class: 'top-text' }, out.title));
-  else replace(title, h('span', { class: 'mark' }, '日'), h('span', null, '일본어 공부방'));
+  else replace(title, h('img', { class: 'mark', src: '/icon.svg', alt: '' }), h('span', null, '나만의 일본어 공부'));
   if (out.right) { /* 화면별 오른쪽 버튼 */ }
 }
 
