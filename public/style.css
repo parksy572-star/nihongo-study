@@ -88,6 +88,9 @@ a { color: var(--accent-strong); }
 }
 .icon-btn:hover { background: var(--accent-soft); }
 .icon-btn.on { color: var(--accent-strong); }
+/* 즐겨찾기·북마크: 켜면 아이콘을 채워 눈에 띄게 */
+.icon-btn.toggle.on svg { fill: currentColor; }
+.icon-btn.toggle.fav.on { color: #e0a100; }
 .icon-btn.sm { width: 32px; height: 32px; border-radius: 9px; }
 .icon-btn.muted { color: var(--muted); }
 .ic { display: inline-grid; place-items: center; line-height: 0; }
@@ -256,12 +259,14 @@ ruby.hide-rt rt { visibility: hidden; }
 .w-card .lv { position: absolute; left: 14px; top: 14px; }
 .w-card .corner { position: absolute; right: 8px; top: 8px; display: flex; }
 .w-card .pos { position: absolute; right: 12px; bottom: 12px; font-size: 12px; color: var(--accent-strong); border: 1px solid var(--accent); border-radius: 999px; padding: 0 8px; background: var(--surface); }
-.w-card .big-word { font-family: var(--jp); font-size: clamp(34px, 11vw, 52px); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; margin-top: 18px; }
+.w-card .big-word { font-family: var(--jp); font-size: clamp(34px, 11vw, 52px); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; margin-top: 30px; }
 .w-card .big-word rt { font-size: .38em; }
 .w-card .meaning { font-size: 1.2em; min-height: 1.6em; }
 .w-card .ex { font-family: var(--jp); font-size: 1.1em; line-height: 2.1; overflow-wrap: anywhere; }
 .w-card .ex-ko { font-size: .92em; color: var(--muted); min-height: 1.4em; }
-.w-card .line { display: flex; align-items: center; gap: 4px; justify-content: center; max-width: 100%; }
+/* 일본어 글자를 카드 한가운데에 두고, 복사·듣기 버튼은 카드 오른쪽 끝에 따로 둔다 */
+.w-card .line { position: relative; width: 100%; padding: 0 40px; display: flex; justify-content: center; text-align: center; }
+.w-card .line-tools, .tcard .line-tools { position: absolute; right: -6px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 0; }
 .mark-hl { color: var(--accent-strong); }
 .hidden-text { visibility: hidden; }
 
@@ -330,7 +335,11 @@ svg.strokes text.on { font-weight: 800; fill: var(--bad); }
 .tcard.anim { transition: transform .28s ease, opacity .28s ease; }
 .tcard .lv { position: absolute; left: 16px; top: 16px; }
 .tcard .tools { position: absolute; right: 8px; top: 8px; display: flex; }
-.tcard .kanji-btn { position: absolute; right: 12px; bottom: 12px; }
+.tcard .line { position: relative; width: 100%; padding: 0 40px; display: flex; justify-content: center; text-align: center; }
+.tcard .t-body .line { margin-top: 14px; }
+.tcard .t-ex { font-family: var(--jp); font-size: 1.1em; line-height: 2.1; overflow-wrap: anywhere; }
+.tcard .t-ex-ko { font-size: .92em; color: var(--muted); min-height: 1.4em; }
+.tcard .t-word .k, .tcard .t-ex .k { cursor: pointer; }
 .tcard .streak { position: absolute; left: 14px; bottom: 14px; font-size: 12px; color: var(--muted); }
 .tcard .t-word { font-family: var(--jp); font-size: clamp(40px, 14vw, 72px); font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
 .tcard .t-word rt { font-size: .32em; }

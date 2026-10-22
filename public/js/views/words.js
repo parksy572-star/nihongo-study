@@ -186,7 +186,7 @@ export function wordFormView({ id }, query) {
   if (id && !r) return { el: emptyState('단어를 찾을 수 없어요.'), title: '단어 수정', back: '/words' };
   const form = wordForm(r?.data || { orig: query.orig || '', tags: query.tag ? [query.tag] : [] });
   const save = h('button', { type: 'button' }, icon('check', 16), '저장');
-  const saveNext = !id && h('button', { type: 'button', class: 'ghost' }, '저장하고 계속');
+  const saveNext = id ? null : h('button', { type: 'button', class: 'ghost' }, '저장하고 계속');
   const doSave = (next) => {
     const v = form.validate();
     if (!v) return;

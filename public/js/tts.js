@@ -111,7 +111,19 @@ export async function geminiVoiceBlob(text, voiceName) {
   return blob;
 }
 
-let warnedFallback = false;
+const warnedFallback = new Set();
+
+// 버튼을 누른 바로 그 순간에 오디오 요소를 한 번 깨워 둔다.
+// 새 목소리처럼 음성을 만드는 데 몇 초 걸리면, 휴대폰(특히 아이폰)이 '사용자가 누른 재생'으로 보지 않아
+// 소리를 막을 수 있기 때문이다.
+function prime() {
+  if (!player.paused) return;
+  try {
+    player.src = SILENT_WAV;
+    const p = player.play();
+    if (p) p.then(() => { unlocked = true; }).catch(() => {});
+  } catch { /* 무시 */ }
+}
 
 /**
  * 일본어 읽기. voice: 'gemini:이름' | 'device' | Gemini 음성 이름.
@@ -126,15 +138,29 @@ export async function speak(text, { rate, voice, pitch } = {}) {
   stopAll();
   const token = playToken;
   if (v === 'device' || DEMO) return deviceSpeak(text, rate, pitch);
+  prime();
+  const voiceName = v.slice(7);
+  // 처음 듣는 목소리·문장은 만드는 데 몇 초 걸린다고 알려 준다
+  const slow = setTimeout(() => { if (token === playToken) toast(`${voiceName} 목소리로 음성을 만드는 중…`, '', 2500); }, 800);
+  let blob;
   try {
-    const blob = await geminiVoiceBlob(text, v.slice(7));
-    if (token !== playToken) return;
-    return playBlob(blob, rate, token);
+    blob = await geminiVoiceBlob(text, voiceName);
   } catch (e) {
+    clearTimeout(slow);
     if (token !== playToken) return;
-    if (!warnedFallback) { toast('Gemini 음성을 쓸 수 없어 기기 음성으로 읽어요', '', 3000); warnedFallback = true; }
+    if (!warnedFallback.has(voiceName)) { toast(`${voiceName} 목소리를 만들지 못해 기기 음성으로 읽어요`, '', 3000); warnedFallback.add(voiceName); }
     console.warn(e);
     return deviceSpeak(text, rate, pitch);
+  }
+  clearTimeout(slow);
+  if (token !== playToken) return;
+  try {
+    return await playBlob(blob, rate, token);
+  } catch (e) {
+    if (token !== playToken) return;
+    // 휴대폰이 재생을 막은 경우: 음성은 이미 저장됐으니 다시 누르면 바로 나온다
+    if (e?.name === 'NotAllowedError') { toast('음성이 준비됐어요. 한 번 더 눌러 주세요', '', 3000); return; }
+    throw e;
   }
 }
 
