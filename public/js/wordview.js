@@ -30,19 +30,24 @@ export function wordOrig(orig, furigana, showFuri, clickable = true) {
   return h('ruby', { class: showFuri ? '' : 'hide-rt' }, kanjiSpan(orig), h('rt', null, furigana));
 }
 
-// 예문: 루비 표기가 있으면 그것으로, 없으면 자동 후리가나. 단어 활용 부분은 강조색.
-function exampleNode(d, showFuri) {
+// 글 속 한자 한 글자씩 눌러서 한자 정보 창
+export const kanjiSpans = (txt) => [...String(txt || '')].map((c) => (isKanjiChar(c)
+  ? h('span', { class: 'k', onclick: (e) => { e.stopPropagation(); openKanji(c); } }, c)
+  : c));
+
+// 예문: 루비 표기가 있으면 그것으로, 없으면 자동 후리가나. 단어 활용 부분은 강조색. 한자는 눌러서 한자 정보.
+export function exampleNode(d, showFuri) {
   if (!d.example) return null;
   const mark = d.exampleMark || '';
   if (showFuri) {
     if (d.exampleRuby) return h('span', null, markRuby(d.exampleRuby, mark));
-    return furi(d.example);
+    return furi(d.example, { kanjiClick: true });
   }
   if (mark && d.example.includes(mark)) {
     const i = d.example.indexOf(mark);
-    return h('span', null, d.example.slice(0, i), h('span', { class: 'mark-hl' }, mark), d.example.slice(i + mark.length));
+    return h('span', null, kanjiSpans(d.example.slice(0, i)), h('span', { class: 'mark-hl' }, kanjiSpans(mark)), kanjiSpans(d.example.slice(i + mark.length)));
   }
-  return h('span', null, d.example);
+  return h('span', null, kanjiSpans(d.example));
 }
 function markRuby(markup, mark) {
   const segs = parseRuby(markup);
@@ -53,7 +58,7 @@ function markRuby(markup, mark) {
   return segs.map((s) => {
     const inMark = start >= 0 && pos < end && pos + s.t.length > start;
     pos += s.t.length;
-    const node = s.r ? h('ruby', null, s.t, h('rt', null, s.r)) : s.t;
+    const node = s.r ? h('ruby', null, kanjiSpans(s.t), h('rt', null, s.r)) : h('span', null, kanjiSpans(s.t));
     return inMark ? h('span', { class: 'mark-hl' }, node) : node;
   });
 }
@@ -69,13 +74,24 @@ export async function wordMenu(r) {
   if (v === 'del' && await confirmDialog(`'${r.data.orig}'을(를) 지울까요?`, { danger: true, ok: '지우기' })) { db.remove(r.id); toast('지웠어요'); }
 }
 
+// 즐겨찾기·북마크 켜고 끄기. 켜지면 아이콘이 채워진다(.toggle.on).
 const toggleBtn = (r, field, ic, label) => {
-  const b = h('button', { type: 'button', class: ['icon-btn', 'sm', r.data[field] ? 'on' : 'muted'], title: label, 'aria-pressed': String(!!r.data[field]) }, icon(ic, 18));
-  b.addEventListener('click', (e) => { e.stopPropagation(); const on = !r.data[field]; db.patch(r.id, { [field]: on }); b.classList.toggle('on', on); b.classList.toggle('muted', !on); });
+  let on = !!db.get(r.id)?.data?.[field];
+  const b = h('button', { type: 'button', class: ['icon-btn', 'sm', 'toggle', field === 'favorite' && 'fav', on ? 'on' : 'muted'], title: label, 'aria-label': label, 'aria-pressed': String(on) }, icon(ic, 18));
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    on = !on;
+    db.patch(r.id, { [field]: on });
+    b.classList.toggle('on', on);
+    b.classList.toggle('muted', !on);
+    b.setAttribute('aria-pressed', String(on));
+  });
   return b;
 };
-const speakBtn = (text, label = '듣기') => h('button', { type: 'button', class: 'icon-btn sm muted', title: label, onclick: (e) => { e.stopPropagation(); speak(text); } }, icon('speaker', 18));
-const copyBtn = (text) => h('button', { type: 'button', class: 'icon-btn sm muted', title: '복사', onclick: (e) => { e.stopPropagation(); copyText(text); } }, icon('copy', 16));
+export const speakBtn = (text, label = '듣기') => h('button', { type: 'button', class: 'icon-btn sm muted', title: label, 'aria-label': label, onclick: (e) => { e.stopPropagation(); speak(text); } }, icon('speaker', 18));
+export const copyBtn = (text) => h('button', { type: 'button', class: 'icon-btn sm muted', title: '복사', 'aria-label': '복사', onclick: (e) => { e.stopPropagation(); copyText(text); } }, icon('copy', 16));
+// 가운데 글자 + 오른쪽 끝 버튼(복사·듣기). 버튼이 글자 가운데 정렬에 영향을 주지 않는다.
+export const centerLine = (content, ...tools) => h('div', { class: 'line' }, content, h('span', { class: 'line-tools' }, ...tools));
 
 /* ---------------- 리스트형 한 줄 ---------------- */
 
@@ -110,10 +126,10 @@ export function wordCard(r, hide) {
   const draw = () => {
     replace(el,
       levelBadge(d.level),
-      h('div', { class: 'corner' }, toggleBtn(r, 'bookmark', 'bookmark', '북마크')),
-      h('div', { class: 'line' }, h('span', { class: 'big-word' }, wordOrig(d.orig, d.furigana, step >= 1)), copyBtn(d.orig), speakBtn(d.furigana || d.orig)),
+      h('div', { class: 'corner' }, toggleBtn(r, 'favorite', 'star', '즐겨찾기'), toggleBtn(r, 'bookmark', 'bookmark', '북마크')),
+      centerLine(h('span', { class: 'big-word' }, wordOrig(d.orig, d.furigana, step >= 1)), copyBtn(d.orig), speakBtn(d.furigana || d.orig)),
       h('div', { class: ['meaning', step < 2 && 'hidden-text'] }, d.meaning),
-      d.example && h('div', { class: 'line' }, h('span', { class: 'ex' }, exampleNode(d, step >= 1)), copyBtn(d.example), speakBtn(d.example, '예문 듣기')),
+      d.example && centerLine(h('span', { class: 'ex' }, exampleNode(d, step >= 1)), copyBtn(d.example), speakBtn(d.example, '예문 듣기')),
       d.example && h('div', { class: ['ex-ko', step < 2 && 'hidden-text'] }, d.exampleKo || ''),
       d.pos && h('span', { class: 'pos' }, d.pos));
   };

@@ -160,17 +160,35 @@ function kanjiPanel(ch, d, rads, sheet) {
   memo.addEventListener('input', saveMemo);
   memo.addEventListener('blur', () => saveMemo.flush());
 
-  const nihongoUrl = h('input', { type: 'url', value: mine.nihongo || '', placeholder: 'https://nihongokanji.com/1127/' });
-  const naverUrl = h('input', { type: 'url', value: mine.naver || '', placeholder: '네이버 한자 항목 주소 (선택)' });
+  // 링크 버튼 2개: 저장한 주소가 있으면 그 주소, 없으면 기본 주소(구글 검색·네이버 한자 검색)
+  const linkNihongo = h('a', { class: 'btn soft small', target: '_blank', rel: 'noopener' });
+  const linkNaver = h('a', { class: 'btn soft small', target: '_blank', rel: 'noopener' });
+  const paintLinks = (m) => {
+    linkNihongo.href = m.nihongo || nihongoSearchUrl(ch);
+    linkNihongo.replaceChildren(icon('external', 14), m.nihongo ? '일본어 한자 공부방' : '일본어 한자 공부방 (구글 검색)');
+    linkNaver.href = m.naver || naverSearchUrl(ch);
+    linkNaver.replaceChildren(icon('external', 14), '네이버 일본어사전');
+  };
+  paintLinks(mine);
+
+  // 주소 수정하기: 두 링크 버튼의 주소를 직접 고친다(PC·휴대폰 동기화)
+  const nihongoUrl = h('input', { type: 'url', value: mine.nihongo || nihongoSearchUrl(ch), placeholder: 'https://nihongokanji.com/1127/' });
+  const naverUrl = h('input', { type: 'url', value: mine.naver || naverSearchUrl(ch), placeholder: naverSearchUrl(ch) });
+  const okUrl = (u) => /^https?:\/\/[^\s]+$/i.test(u);
   const saveUrls = () => {
     const a = nihongoUrl.value.trim(), b = naverUrl.value.trim();
-    if (a && !/^https:\/\/(www\.)?nihongokanji\.com\//.test(a)) { toast('nihongokanji.com 주소를 붙여 넣어 주세요', 'err'); return; }
-    if (b && !/^https:\/\/(ja\.dict|dict)\.naver\.com\//.test(b) && !/^https:\/\/m\.dict\.naver\.com\//.test(b)) { toast('네이버 사전 주소를 붙여 넣어 주세요', 'err'); return; }
-    saveMyKanji(ch, { nihongo: a, naver: b });
-    toast('링크를 저장했어요 (PC·휴대폰 모두에서 열려요)');
+    if ((a && !okUrl(a)) || (b && !okUrl(b))) { toast('https:// 로 시작하는 주소를 넣어 주세요', 'err'); return; }
+    // 기본 주소와 같으면 따로 저장하지 않는다(기본 주소는 한자마다 자동으로 만들어짐)
+    const patch = { nihongo: a === nihongoSearchUrl(ch) ? '' : a, naver: b === naverSearchUrl(ch) ? '' : b };
+    saveMyKanji(ch, patch);
+    paintLinks(patch);
+    toast('링크 주소를 저장했어요 (PC·휴대폰 모두에 반영돼요)');
   };
-  nihongoUrl.addEventListener('change', saveUrls);
-  naverUrl.addEventListener('change', saveUrls);
+  const resetUrls = () => {
+    nihongoUrl.value = nihongoSearchUrl(ch);
+    naverUrl.value = naverSearchUrl(ch);
+    saveUrls();
+  };
 
   const parts = (d?.p || []).filter((p) => p !== ch);
   return h('div', { class: 'stack' },
@@ -194,11 +212,14 @@ function kanjiPanel(ch, d, rads, sheet) {
     h('label', { class: 'field' }, h('span', { class: 'field-label' }, '내 메모 (구성 원리)'), memo),
     h('div', { class: 'stack tight' },
       h('span', { class: 'field-label' }, '구성 원리·훈음 확인'),
-      h('div', { class: 'row wrap' },
-        h('a', { class: 'btn soft small', href: mine.nihongo || nihongoSearchUrl(ch), target: '_blank', rel: 'noopener' }, icon('external', 14), mine.nihongo ? '일본어 한자 공부방' : '일본어 한자 공부방 (구글 검색)'),
-        h('a', { class: 'btn soft small', href: mine.naver || naverSearchUrl(ch), target: '_blank', rel: 'noopener' }, icon('external', 14), '네이버 일본어사전')),
-      h('details', null, h('summary', { class: 'hint' }, '찾은 주소 저장하기'),
-        h('div', { class: 'stack tight', style: { marginTop: '8px' } }, nihongoUrl, naverUrl))),
+      h('div', { class: 'row wrap' }, linkNihongo, linkNaver),
+      h('details', null, h('summary', { class: 'hint' }, '주소 수정하기'),
+        h('div', { class: 'stack tight', style: { marginTop: '8px' } },
+          h('label', { class: 'field' }, h('span', { class: 'field-label' }, '일본어 한자 공부방 링크'), nihongoUrl),
+          h('label', { class: 'field' }, h('span', { class: 'field-label' }, '네이버 일본어사전 링크'), naverUrl),
+          h('div', { class: 'row end' },
+            h('button', { type: 'button', class: 'ghost small', onclick: resetUrls }, '기본 주소로'),
+            h('button', { type: 'button', class: 'small', onclick: saveUrls }, '저장'))))),
     h('p', { class: 'credit' }, '한자 데이터: KANJIDIC2 (EDRDG, CC BY-SA 4.0) · 획순: KanjiVG (© Ulrich Apel, CC BY-SA 3.0) · 표외 표시: 常用漢字表(2010) 대조'));
 }
 
