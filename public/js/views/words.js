@@ -6,6 +6,7 @@ import { wordDraftPrompt, WORD_DRAFT_SCHEMA, checkWordDraft } from '../../ai-rul
 import { kataToHira, hangulKeys, rubyPlain, isKanaOnly } from '../kana.js';
 import { kanjiOf, openKanji, kanjiName, kanjiData } from '../kanji.js';
 import { wordList, LEVELS } from '../wordview.js';
+import { soundToggle } from '../prefs.js';
 import { startTest } from './test.js';
 
 /* ---------------- 저장 ---------------- */
@@ -76,7 +77,21 @@ export function wordsView(_p, _q, ctx) {
         h('select', { onchange: (e) => { f.sort = e.target.value; save(); redraw(); } }, SORTS.map(([v, l]) => h('option', { value: v, selected: f.sort === v }, l)))));
   };
 
+  const deleteSelected = async (ids) => {
+    if (!ids.length) return;
+    const ok = await confirmDialog(`단어 ${ids.length}개를 지울까요?\n(한자 페이지에 적어 둔 훈음·메모·링크는 그대로 남아요)`, { danger: true, ok: `${ids.length}개 지우기` });
+    if (!ok) return;
+    const removed = ids.map((id) => db.get(id)).filter(Boolean);
+    removed.forEach((r) => db.remove(r.id));
+    list.stopSelect();
+    getRows(); redraw();
+    toast(`단어 ${removed.length}개를 지웠어요`, '', 8000, {
+      label: '되돌리기',
+      onClick: () => { removed.forEach((r) => db.put('word', r.data, r.id)); toast('되돌렸어요'); },
+    });
+  };
   list = wordList('words', getRows, {
+    onDeleteSelected: deleteSelected,
     onTest: () => startTest({ ids: rowsCache.map((r) => r.id), title: testTitle(f) }),
     empty: emptyState('아직 등록한 단어가 없어요.', h('div', { class: 'row wrap' },
       h('button', { type: 'button', onclick: () => go('/words/new') }, icon('plus', 16), '단어 등록'),
@@ -88,9 +103,11 @@ export function wordsView(_p, _q, ctx) {
     h('div', { class: 'toolbar' }, count,
       h('button', { type: 'button', class: ['icon-btn', f.shuffle && 'on'], title: '셔플', onclick: (e) => { f.shuffle = !f.shuffle; e.currentTarget.classList.toggle('on', f.shuffle); redraw(); } }, icon('shuffle', 20)),
       filterBtn,
+      soundToggle(),
       h('a', { class: 'icon-btn', href: '#/search?scope=word', title: '검색' }, icon('search', 20)),
       h('button', { type: 'button', class: 'soft small', onclick: () => go('/words/new') }, icon('plus', 16), '등록'),
-      h('button', { type: 'button', class: 'ghost small', onclick: () => go('/words/import') }, '일괄')),
+      h('button', { type: 'button', class: 'ghost small', onclick: () => go('/words/import') }, '일괄'),
+      h('button', { type: 'button', class: 'ghost small', title: '여러 단어 선택해서 지우기', onclick: () => (list.selecting ? list.stopSelect() : list.startSelect()) }, '선택')),
     filterBox,
     list.el);
   getRows();

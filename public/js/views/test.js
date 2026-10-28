@@ -3,12 +3,13 @@
 
 import { h, icon, go, replace, toast, modal, mmss, copyText, store, emptyState, segmented, chipToggle, fmtDate } from '../core.js';
 import { db } from '../db.js';
-import { speak } from '../tts.js';
+import { speak, autoSpeakOn, prefetchVoice } from '../tts.js';
 import { RoundDeck } from '../deck.js';
-import { streakSetting } from '../prefs.js';
+import { streakSetting, soundToggle } from '../prefs.js';
 import { openKanji, kanjiData, kanjiName } from '../kanji.js';
 import { levelBadge, wordOrig, exampleNode, centerLine, speakBtn, copyBtn, kanjiSpans } from '../wordview.js';
 import { isKanjiChar } from '../core.js';
+import { furi } from '../furigana.js';
 
 /* ---------------- 시작 ---------------- */
 
@@ -34,7 +35,7 @@ export async function startTest({ ids, title, type = 'words' }) {
   store.set('testLimit', limit);
   const pick = limit === 'all' ? ids : [...ids].sort(() => Math.random() - 0.5).slice(0, limit);
   db.saveProgress('test', {
-    title, type, ids: pick,
+    title, testType: type, ids: pick, // type은 진행 상태 칸 이름으로 쓰여 testType에 둔다
     deck: new RoundDeck({ ids: pick, streak: streakSetting() }).state,
     startedAt: new Date().toISOString(), elapsed: 0,
   });
@@ -87,7 +88,26 @@ export function testHomeView(_p, _q, ctx) {
 
 /* ---------------- 카드 ---------------- */
 
+// 문법 카드 id: 'g:<문법 id>'(문형 → 뜻), 'gb:<문법 id>:<예문 번호>'(예문 빈칸)
+function grammarRef(id) {
+  id = String(id);
+  if (id.startsWith('g:')) return { r: db.get(id.slice(2)) };
+  if (id.startsWith('gb:')) { const [, gid, i] = id.split(':'); return { r: db.get(gid), i: Number(i) }; }
+  return null;
+}
+
 async function cardFor(id) {
+  const g = grammarRef(id);
+  if (g) {
+    if (!g.r) return null;
+    const d = g.r.data;
+    if (String(id).startsWith('g:')) {
+      return { kind: 'grammar', id, front: d.pattern, connection: d.connection || '', meaning: d.meaning || '', ex: (d.examples || [])[0] || null, level: d.level };
+    }
+    const ex = (d.examples || [])[g.i];
+    if (!ex || !ex.mark || !ex.ja.includes(ex.mark)) return null;
+    return { kind: 'blank', id, front: ex.ja, ex, pattern: d.pattern, meaning: d.meaning || '', level: d.level };
+  }
   if (String(id).startsWith('k:')) {
     const ch = id.slice(2);
     const d = await kanjiData(ch);
@@ -108,7 +128,7 @@ export function testRunView(_p, query, ctx) {
     store.del('pendingTest');
     if (pend?.type === 'kanji') {
       const ids = pend.chars.map((c) => 'k:' + c);
-      db.saveProgress('test', { title: pend.title, type: 'kanji', ids, deck: new RoundDeck({ ids, streak: streakSetting() }).state, startedAt: new Date().toISOString(), elapsed: 0 });
+      db.saveProgress('test', { title: pend.title, testType: 'kanji', ids, deck: new RoundDeck({ ids, streak: streakSetting() }).state, startedAt: new Date().toISOString(), elapsed: 0 });
       history.replaceState(null, '', '#/test/run');
     }
   }
@@ -132,7 +152,7 @@ export function testRunView(_p, query, ctx) {
     h('div', { class: 'test-top' },
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': '나가기', onclick: () => { save(); go('/test'); } }, icon('back', 22)),
       h('div', { class: 'stack tight', style: { justifyItems: 'center' } }, progEl, roundEl),
-      timeEl),
+      h('div', { class: 'row', style: { gap: '2px' } }, soundToggle((on) => { if (on && card) prefetchCards(); }), timeEl)),
     h('div', { class: 'bar' }, barEl),
     deckEl,
     h('div', { class: 'test-controls' },
@@ -164,12 +184,53 @@ export function testRunView(_p, query, ctx) {
     paintCard();
     deckEl.replaceChildren(cardEl);
     attachSwipe(cardEl);
+    prefetchCards();
     if (!db.settings().testHelpSeen) showHelp();
+  };
+
+  // 지금 카드와 다음 카드의 단어 음성을 미리 만들어 둔다(공개하자마자 바로 재생, 보관함에 저장돼 단어장과 같이 씀)
+  const prefetchCards = () => {
+    if (!autoSpeakOn()) return;
+    const s2 = deck.state;
+    for (const id of [s2.queue[s2.pos], s2.queue[s2.pos + 1]]) {
+      const r = id && !String(id).startsWith('k:') ? db.get(id) : null;
+      if (r) prefetchVoice(r.data.furigana || r.data.orig);
+    }
+  };
+
+  // 예문(문형 부분 강조 또는 빈칸). 한자는 눌러서 한자 정보.
+  const exLine = (ex, { blank = false } = {}) => {
+    const i = ex.mark ? ex.ja.indexOf(ex.mark) : -1;
+    if (i < 0) return furi(ex.ja, { kanjiClick: true });
+    return h('span', null, furi(ex.ja.slice(0, i), { kanjiClick: true }),
+      blank ? h('span', { class: 'blank-slot' }, '＿＿＿') : h('span', { class: 'mark-hl' }, furi(ex.mark, { kanjiClick: true })),
+      furi(ex.ja.slice(i + ex.mark.length), { kanjiClick: true }));
+  };
+
+  const paintGrammar = (c, run, missed) => {
+    const speakText = c.kind === 'blank' ? c.ex.ja : (c.ex?.ja || c.front.replace(/^〜/, ''));
+    replace(cardEl,
+      levelBadge(c.level),
+      h('div', { class: 'tools' },
+        h('button', { type: 'button', class: 'icon-btn sm muted', title: '듣기', onclick: (e) => { e.stopPropagation(); speak(speakText); } }, icon('speaker', 18))),
+      c.kind === 'grammar'
+        ? h('div', { class: 't-body' },
+          h('div', { class: 't-word t-pattern', lang: 'ja' }, kanjiSpans(c.front)),
+          h('div', { class: ['muted', step < 1 && 'hidden-text'] }, c.connection ? ['접속: ', furi(c.connection, { kanjiClick: true })] : '접속 정보 없음'),
+          h('div', { class: ['t-mean', step < 2 && 'hidden-text'] }, c.meaning),
+          c.ex && h('div', { class: ['t-ex', step < 2 && 'hidden-text'] }, exLine(c.ex)),
+          c.ex && h('div', { class: ['t-ex-ko', step < 2 && 'hidden-text'] }, c.ex.ko || ''))
+        : h('div', { class: 't-body' },
+          h('div', { class: 't-ex t-blank', lang: 'ja' }, exLine(c.ex, { blank: step < 1 })),
+          h('div', { class: ['t-ex-ko', step < 2 && 'hidden-text'] }, c.ex.ko || ''),
+          h('div', { class: ['t-mean', step < 2 && 'hidden-text'] }, h('span', { class: 'jp' }, c.pattern), ' · ', c.meaning)),
+      missed > 0 && st.deck.need > 1 && h('span', { class: 'streak' }, `연속 ${run}/${st.deck.need}`));
   };
 
   const paintCard = () => {
     const c = card;
     const run = st.deck.run[c.id] || 0, missed = st.deck.missed[c.id] || 0;
+    if (c.kind === 'grammar' || c.kind === 'blank') return paintGrammar(c, run, missed);
     const d = c.row?.data || {};
     replace(cardEl,
       levelBadge(c.level),
@@ -190,7 +251,10 @@ export function testRunView(_p, query, ctx) {
   const toggle = () => {
     step = (step + 1) % 3;
     paintCard();
+    if (!autoSpeakOn()) return;
     if (step === 1 && card.kind === 'word') speak(card.furigana || card.front).catch(() => {});
+    if (step === 1 && card.kind === 'blank') speak(card.ex.ja).catch(() => {});
+    if (step === 2 && card.kind === 'grammar' && card.ex) speak(card.ex.ja).catch(() => {});
   };
 
   const swipe = (known, fromDrag = false) => {
@@ -276,21 +340,24 @@ export function testRunView(_p, query, ctx) {
     replace(el, h('div', { class: 'panel stack' },
       h('h2', null, '테스트 완료!'),
       h('div', { class: 'stat' },
-        h('div', null, h('b', null, st.deck.total), h('span', null, '단어')),
+        h('div', null, h('b', null, st.deck.total), h('span', null, st.testType === 'grammar' ? '문제' : '단어')),
         h('div', null, h('b', null, mmss(seconds)), h('span', null, '걸린 시간')),
         h('div', null, h('b', null, st.deck.round), h('span', null, '판'))),
-      hard.length > 0 && h('h3', { class: 'group-title' }, '여러 번 모른다고 한 단어'),
+      hard.length > 0 && h('h3', { class: 'group-title' }, st.testType === 'grammar' ? '여러 번 모른다고 한 문법' : '여러 번 모른다고 한 단어'),
       hard.length > 0 && h('div', { class: 'list' }, hard.map(({ id, n }) => {
         const r = db.get(id);
-        const label = r ? r.data.orig : id.replace(/^k:/, '');
+        const g = grammarRef(id);
+        const gd = g?.r?.data;
+        const label = r ? r.data.orig : gd ? (g.i != null ? (gd.examples?.[g.i]?.ja || gd.pattern) : gd.pattern) : id.replace(/^k:/, '');
+        const sub = r ? `${r.data.furigana} · ${r.data.meaning}` : gd ? `${gd.pattern} · ${gd.meaning || ''}` : '한자';
         return h('div', { class: 'item' },
-          h('div', { class: 'item-main' }, h('span', { class: 'item-title jp' }, label), h('span', { class: 'item-sub' }, r ? `${r.data.furigana} · ${r.data.meaning}` : '한자')),
+          h('div', { class: 'item-main' }, h('span', { class: 'item-title jp' }, label), h('span', { class: 'item-sub' }, sub)),
           h('span', { class: 'tag bad' }, `${n}번`),
           r && chipToggle('북마크', !!r.data.bookmark, (on) => db.patch(id, { bookmark: on })));
       })),
       h('div', { class: 'row wrap' },
         h('button', { type: 'button', onclick: () => go('/test') }, '테스트 홈'),
-        hard.length > 0 && h('button', { type: 'button', class: 'ghost', onclick: () => startTest({ ids: hard.map((x) => x.id), title: st.title + ' · 어려운 단어' }) }, '어려운 단어만 다시'))));
+        hard.length > 0 && h('button', { type: 'button', class: 'ghost', onclick: () => startTest({ ids: hard.map((x) => x.id), title: st.title + ' · 다시', type: st.testType }) }, st.testType === 'grammar' ? '어려운 것만 다시' : '어려운 단어만 다시'))));
   };
 
   // 다른 기기에서 넘긴 진행 상태가 들어오면 반영

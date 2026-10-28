@@ -1,6 +1,7 @@
 // 화면별 설정 도우미 (설정 행에 저장 → 기기 간 동기화)
 import { h, icon } from './core.js';
 import { db } from './db.js';
+import { stopAll } from './tts.js';
 
 export function viewMode(screen) {
   const s = db.settings();
@@ -18,6 +19,29 @@ export function viewToggle(screen, onChange) {
   const paint = () => { btn.replaceChildren(icon(mode === 'list' ? 'cards' : 'list', 22)); btn.title = mode === 'list' ? '카드형으로 보기' : '리스트형으로 보기'; };
   paint();
   btn.addEventListener('click', () => { mode = mode === 'list' ? 'card' : 'list'; setViewMode(screen, mode); paint(); onChange(mode); });
+  return btn;
+}
+
+// 자동 읽기 켜기/끄기 버튼 (단어 테스트·단어장이 같이 쓰는 설정, 기기 간 동기화)
+export function soundToggle(onChange) {
+  const btn = h('button', { type: 'button', class: 'icon-btn' });
+  const paint = () => {
+    const on = db.settings().autoSpeak !== false;
+    btn.replaceChildren(icon(on ? 'speaker' : 'mute', 20));
+    btn.title = on ? '자동 읽기 켜짐 (누르면 끔)' : '자동 읽기 꺼짐 (누르면 켬)';
+    btn.setAttribute('aria-label', btn.title);
+    btn.setAttribute('aria-pressed', String(on));
+    btn.classList.toggle('on', on);
+  };
+  paint();
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const on = db.settings().autoSpeak === false;
+    db.setSettings({ autoSpeak: on });
+    if (!on) stopAll(); // 끄면 지금 나오는 소리도 멈춘다
+    paint();
+    onChange?.(on);
+  });
   return btn;
 }
 

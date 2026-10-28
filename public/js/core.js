@@ -42,6 +42,7 @@ const ICONS = {
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   speaker: '<path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
+  mute: '<path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M23 9l-6 6M17 9l6 6"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   star: '<path d="M12 2l3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z"/>',
   bookmark: '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
@@ -123,12 +124,16 @@ export const store = {
 
 /* ---------------- 알림 ---------------- */
 
-export function toast(text, kind = '', ms = 2600) {
+export function toast(text, kind = '', ms = 2600, action = null) {
   let root = $('#toasts');
   if (!root) { root = h('div', { id: 'toasts', 'aria-live': 'polite' }); document.body.append(root); }
-  const t = h('div', { class: ['toast', kind] }, text);
+  const t = h('div', { class: ['toast', kind, action && 'has-action'] }, h('span', null, text));
+  const hide = () => { t.classList.add('out'); setTimeout(() => t.remove(), 300); };
+  if (action) {
+    t.append(h('button', { type: 'button', class: 'toast-btn', onclick: () => { hide(); action.onClick(); } }, action.label));
+  }
   root.append(t);
-  setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 300); }, ms);
+  setTimeout(hide, ms);
 }
 
 /* ---------------- 바텀 시트 ---------------- */
@@ -158,25 +163,50 @@ export function openSheet(content, { onClose, className = '' } = {}) {
   };
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) api.close(); });
 
-  // 아래로 끌어서 닫기 (손잡이·맨 위에서 시작할 때만)
-  let startY = null, dy = 0;
+  // 아래로 끌어서 닫기: 내용이 맨 위까지 올라가 있으면 빈 곳 어디서든 끌어 내려 닫는다.
+  // 휴대폰은 내용 위에서 끌면 브라우저가 스크롤로 먼저 가져가므로, 터치는 직접 처리해 스크롤 대신 시트를 내린다.
+  const NO_DRAG = 'input,textarea,select,button,a,svg.strokes,.genko,[contenteditable]';
+  let startY = null, startX = 0, dy = 0, dragging = false, startT = 0;
+  const follow = () => { panel.style.transition = 'none'; panel.style.transform = `translateY(${dy}px)`; };
+  const release = () => {
+    const fast = dy > 40 && dy / Math.max(1, Date.now() - startT) > 0.6; // 빠르게 튕겨 내리면 짧아도 닫기
+    panel.style.transition = '';
+    panel.style.transform = '';
+    if (dy > 90 || fast) api.close();
+    startY = null; dragging = false; dy = 0;
+  };
+  panel.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || e.target.closest(NO_DRAG)) { startY = null; return; }
+    startY = e.touches[0].clientY; startX = e.touches[0].clientX; dy = 0; dragging = false; startT = Date.now();
+  }, { passive: true });
+  panel.addEventListener('touchmove', (e) => {
+    if (startY == null) return;
+    const ddy = e.touches[0].clientY - startY;
+    const ddx = e.touches[0].clientX - startX;
+    if (!dragging) {
+      // 맨 위에서 아래로 끌 때만 시트를 내린다(위로 끌면 평소처럼 스크롤)
+      if (panel.scrollTop <= 0 && ddy > 6 && Math.abs(ddy) > Math.abs(ddx)) { dragging = true; startY = e.touches[0].clientY; startT = Date.now(); }
+      else if (Math.abs(ddy) > 6 || Math.abs(ddx) > 6) { startY = null; return; }
+      else return;
+    }
+    e.preventDefault();
+    dy = Math.max(0, e.touches[0].clientY - startY);
+    follow();
+  }, { passive: false });
+  panel.addEventListener('touchend', () => { if (dragging) release(); else startY = null; });
+  panel.addEventListener('touchcancel', () => { if (dragging) release(); else startY = null; });
+
+  // 마우스(PC): 맨 위에서 끌어 내리기
   panel.addEventListener('pointerdown', (e) => {
-    if (panel.scrollTop > 0 || e.target.closest('input,textarea,select,button,a,svg.strokes')) return;
-    startY = e.clientY; dy = 0;
+    if (e.pointerType !== 'mouse' || panel.scrollTop > 0 || e.target.closest(NO_DRAG)) return;
+    startY = e.clientY; dy = 0; dragging = true; startT = Date.now();
   });
   panel.addEventListener('pointermove', (e) => {
-    if (startY == null) return;
+    if (e.pointerType !== 'mouse' || !dragging || startY == null) return;
     dy = Math.max(0, e.clientY - startY);
-    if (dy > 4) panel.style.transform = `translateY(${dy}px)`;
+    if (dy > 4) follow();
   });
-  const end = () => {
-    if (startY == null) return;
-    startY = null;
-    panel.style.transform = '';
-    if (dy > 90) api.close();
-  };
-  panel.addEventListener('pointerup', end);
-  panel.addEventListener('pointercancel', end);
+  panel.addEventListener('pointerup', (e) => { if (e.pointerType === 'mouse' && dragging) release(); });
   sheetStack.push(api);
   return api;
 }

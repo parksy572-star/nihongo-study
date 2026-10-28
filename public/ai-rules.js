@@ -36,6 +36,7 @@ export const TASKS = {
   writingAnalyze:    { tier: 'flash', temperature: 0 },
   wordDraft:         { tier: 'lite', temperature: 0 },
   furigana:          { tier: 'lite', temperature: 0 },
+  grammarSplit:      { tier: 'flash', temperature: 0 },
 };
 
 /* ---------- 공통 검사 도구 ---------- */
@@ -536,5 +537,44 @@ export function checkFurigana(j, texts) {
     ok[it.i] = it.ruby;
   }
   j.valid = ok;
+  return { ok: true, warnings: [] };
+}
+
+/* ---------- 문법 자유 정리 → 문형 카드 나누기 ---------- */
+
+export const GRAMMAR_SPLIT_SCHEMA = OBJ({
+  items: ARR(OBJ({
+    pattern: S(), connection: S(), meaning: S(), note: S(),
+    level: S({ enum: ['N5', 'N4', 'N3', 'N2', 'N1', ''] }),
+    examples: ARR(OBJ({ ja: S(), ko: S(), mark: S() })),
+  })),
+});
+
+export function grammarSplitPrompt(title, body) {
+  return [
+    COMMON_RULES,
+    '',
+    '[역할] 학습자가 자유롭게 정리한 일본어 문법 노트에서 문형(문법 항목)을 하나씩 찾아 카드로 나눈다.',
+    `[노트 제목] ${title || '(없음)'}`,
+    '[노트 본문]',
+    body,
+    '',
+    '[규칙]',
+    '- 노트에 실제로 적힌 문형만 뽑는다. 노트에 없는 문형을 더하지 않는다. 최대 15개.',
+    '- pattern: 문형 표기(예: 〜わけにはいかない). connection: 접속(노트에 없으면 빈 문자열).',
+    '- meaning: 한국어 뜻(노트에 있으면 그대로, 없으면 짧게). note: 노트에 적힌 설명·차이점을 그 문형에 맞게 옮긴다.',
+    '- level: 노트에 JLPT 레벨이 적혀 있을 때만, 없으면 빈 문자열.',
+    '- examples: 노트에 있는 그 문형의 예문만. ja=예문, ko=해석(노트에 없으면 짧게 번역), mark=예문 속 문형 부분 그대로. 예문이 없으면 빈 배열.',
+  ].join('\n');
+}
+
+export function checkGrammarSplit(j) {
+  if (!j || !Array.isArray(j.items)) return { ok: false, warnings: ['문형 나누기 결과 형식이 올바르지 않아요.'] };
+  j.items = j.items.filter((it) => it && typeof it.pattern === 'string' && JP.test(it.pattern) && it.pattern.trim()).slice(0, 15);
+  for (const it of j.items) {
+    it.pattern = it.pattern.trim();
+    it.examples = (it.examples || []).filter((e) => e && JP.test(e.ja || '')).map((e) => ({ ja: e.ja.trim(), ko: (e.ko || '').trim(), mark: e.mark && e.ja.includes(e.mark) ? e.mark : '' }));
+  }
+  if (!j.items.length) return { ok: true, warnings: ['노트에서 문형을 찾지 못했어요.'] };
   return { ok: true, warnings: [] };
 }

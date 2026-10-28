@@ -144,6 +144,11 @@ export async function mockGemini(body) {
       const word = (/\[단어\] (.+)/.exec(prompt) || [])[1] || '';
       return wrap({ furigana: 'つぐ', meaning: '잇다, 이어받다', level: 'N3', pos: '1그룹 동사', example_ja: '父の仕事を継いだ。', example_ruby: '[父|ちち]の[仕事|しごと]を[継|つ]いだ。', example_ko: '아버지의 일을 이어받았다.', example_mark: '継いだ', _word: word });
     }
+    case 'grammarSplit':
+      return wrap({ items: [
+        { pattern: '〜わけにはいかない', connection: '동사 사전형 + わけにはいかない', meaning: '~할 수는 없다(사정상)', note: '도덕적·사회적 이유', level: 'N2', examples: [{ ja: '約束したから、行かないわけにはいかない。', ko: '약속했으니 안 갈 수는 없다.', mark: 'わけにはいかない' }] },
+        { pattern: '〜ざるを得ない', connection: '동사 ない형 + ざるを得ない', meaning: '~하지 않을 수 없다', note: '어쩔 수 없이', level: 'N2', examples: [] },
+      ] });
     case 'furigana': {
       const texts = [...prompt.matchAll(/^(\d+): (.*)$/gm)].map((m) => m[2]);
       const words = Object.keys(DICT).sort((a, b) => b.length - a.length);
