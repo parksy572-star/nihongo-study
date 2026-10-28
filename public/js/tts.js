@@ -47,19 +47,35 @@ export function voiceSettings() {
 /* ---------------- 기기 음성 ---------------- */
 
 export function deviceVoices() {
-  return (window.speechSynthesis?.getVoices() || []).filter((v) => v.lang?.toLowerCase().startsWith('ja'));
+  return (window.speechSynthesis?.getVoices() || []).filter((v) => v.lang?.toLowerCase().replace('_', '-').startsWith('ja'));
 }
 
-function deviceSpeak(text, rate, pitch = 1) {
+// 음성 목록은 처음에 비어 있다가 나중에 채워지는 브라우저가 있어 잠깐 기다린다
+function jaVoices() {
+  const now = deviceVoices();
+  if (now.length || !('speechSynthesis' in window)) return Promise.resolve(now);
+  return new Promise((res) => {
+    const done = () => { speechSynthesis.removeEventListener?.('voiceschanged', done); res(deviceVoices()); };
+    speechSynthesis.addEventListener?.('voiceschanged', done);
+    setTimeout(done, 1500);
+  });
+}
+
+class NoJapaneseVoice extends Error {}
+
+async function deviceSpeak(text, rate, pitch = 1) {
+  if (!('speechSynthesis' in window)) throw new NoJapaneseVoice('이 브라우저는 기기 음성을 지원하지 않아요');
+  const voices = await jaVoices();
+  const saved = store.get('deviceVoice');
+  const v = voices.find((x) => x.voiceURI === saved) || voices[0];
+  // 일본어 음성이 없으면 한국어·영어 음성으로 읽게 되므로 읽지 않는다
+  if (!v) throw new NoJapaneseVoice('이 기기에 일본어 음성이 없어요');
   return new Promise((resolve, reject) => {
-    if (!('speechSynthesis' in window)) return reject(new Error('이 브라우저는 기기 음성을 지원하지 않아요'));
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'ja-JP';
+    u.voice = v;
     u.rate = rate;
     u.pitch = pitch;
-    const saved = store.get('deviceVoice');
-    const v = deviceVoices().find((x) => x.voiceURI === saved) || deviceVoices()[0];
-    if (v) u.voice = v;
     // 일부 기기는 끝 알림(onend)이 오지 않아, 읽는 데 걸릴 만한 시간이 지나면 끝난 것으로 본다
     const guard = setTimeout(resolve, Math.max(3000, (text.length * 230) / rate) + 2500);
     u.onend = () => { clearTimeout(guard); resolve(); };
@@ -86,23 +102,41 @@ function pcmToWav(b64, mimeType) {
   return new Blob([view, pcm], { type: 'audio/wav' });
 }
 
-const memo = new Map();
+const memo = new Map();     // 만든 음성 (이 기기 메모리)
+const pending = new Map();  // 만드는 중인 음성 — 같은 문장을 또 요청하면 이걸 기다린다
+let quotaUntil = 0;         // 무료 한도에 걸렸으면 잠시 Gemini 음성 요청을 쉰다
+
 export async function geminiVoiceBlob(text, voiceName) {
   const { tts } = await models();
   if (!tts) throw new Error('Gemini 음성 모델이 없어요');
   const hash = await sha256(`${tts}|${voiceName}|${text}`);
   if (memo.has(hash)) return memo.get(hash);
+  if (pending.has(hash)) return pending.get(hash);
+  const p = makeVoice(tts, hash, text, voiceName).finally(() => pending.delete(hash));
+  pending.set(hash, p);
+  return p;
+}
+
+// 재생을 멈추거나 다른 단어로 넘어가도 음성 만들기는 끝까지 해서 저장한다(다음에 바로 재생)
+async function makeVoice(tts, hash, text, voiceName) {
   const sub = `tts/${hash}.wav`;
   const path = db.filePath(sub);
   try {
     const cached = await db.download(path);
     if (cached?.size > 44) { memo.set(hash, cached); return cached; }
   } catch { /* 아직 없음 */ }
-  const res = await rawGemini({
-    model: tts,
-    contents: [{ role: 'user', parts: [{ text }] }],
-    generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } } },
-  });
+  if (Date.now() < quotaUntil) { const e = new Error('Gemini 음성 무료 한도'); e.code = 'quota'; throw e; }
+  let res;
+  try {
+    res = await rawGemini({
+      model: tts,
+      contents: [{ role: 'user', parts: [{ text }] }],
+      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } } },
+    });
+  } catch (e) {
+    if (e.code === 'quota' || e.code === 'quota0') quotaUntil = Date.now() + 60000;
+    throw e;
+  }
   const part = (res.candidates?.[0]?.content?.parts || []).find((p) => p.inlineData?.data);
   if (!part) throw new Error('음성이 만들어지지 않았어요');
   const blob = pcmToWav(part.inlineData.data, part.inlineData.mimeType);
@@ -111,7 +145,12 @@ export async function geminiVoiceBlob(text, voiceName) {
   return blob;
 }
 
-const warnedFallback = new Set();
+let lastNotice = { msg: '', at: 0 };
+const notice = (msg) => {
+  if (lastNotice.msg === msg && Date.now() - lastNotice.at < 30000) return;
+  lastNotice = { msg, at: Date.now() };
+  toast(msg, '', 3500);
+};
 
 // 버튼을 누른 바로 그 순간에 오디오 요소를 한 번 깨워 둔다.
 // 새 목소리처럼 음성을 만드는 데 몇 초 걸리면, 휴대폰(특히 아이폰)이 '사용자가 누른 재생'으로 보지 않아
@@ -137,7 +176,12 @@ export async function speak(text, { rate, voice, pitch } = {}) {
   if (!v.startsWith('gemini:') && v !== 'device') v = 'gemini:' + v;
   stopAll();
   const token = playToken;
-  if (v === 'device' || DEMO) return deviceSpeak(text, rate, pitch);
+  if (v === 'device' || DEMO) {
+    try { return await deviceSpeak(text, rate, pitch); } catch (e) {
+      if (e instanceof NoJapaneseVoice) { notice(`${e.message}. 설정 > 듣기에서 Gemini 음성을 골라 주세요`); return; }
+      throw e;
+    }
+  }
   prime();
   const voiceName = v.slice(7);
   // 처음 듣는 목소리·문장은 만드는 데 몇 초 걸린다고 알려 준다
@@ -148,9 +192,15 @@ export async function speak(text, { rate, voice, pitch } = {}) {
   } catch (e) {
     clearTimeout(slow);
     if (token !== playToken) return;
-    if (!warnedFallback.has(voiceName)) { toast(`${voiceName} 목소리를 만들지 못해 기기 음성으로 읽어요`, '', 3000); warnedFallback.add(voiceName); }
     console.warn(e);
-    return deviceSpeak(text, rate, pitch);
+    const why = e.code === 'quota' || e.code === 'quota0' ? 'Gemini 음성 무료 한도가 차서' : 'Gemini 음성을 만들지 못해';
+    try {
+      await deviceSpeak(text, rate, pitch);
+      notice(`${why} 이 기기의 일본어 음성으로 읽었어요`);
+    } catch (e2) {
+      notice(e2 instanceof NoJapaneseVoice ? `${why} 읽지 못했어요(이 기기에 일본어 음성이 없어요). 잠시 뒤 다시 눌러 주세요` : `${why} 읽지 못했어요`);
+    }
+    return;
   }
   clearTimeout(slow);
   if (token !== playToken) return;
@@ -192,4 +242,18 @@ export function playBlob(blob, rate = 1, token = null) {
 
 export function isPlaying() {
   return !player.paused || (window.speechSynthesis?.speaking ?? false);
+}
+
+/* ---------------- 자동 읽기(소리 켜기/끄기) ---------------- */
+
+// 단어 테스트·단어장 카드형에서 후리가나를 공개할 때 저절로 읽어 줄지. 설정 행에 저장(기기 간 동기화).
+// 끄면 저절로 읽지 않고 미리 만들지도 않는다. 스피커 버튼을 직접 누르면 그때는 읽는다.
+export const autoSpeakOn = () => db.settings().autoSpeak !== false;
+
+// 화면에 나온 단어의 음성을 미리 만들어 둔다(공개하자마자 바로 재생). 만든 음성은 보관함에 저장돼 단어장·테스트가 같이 쓴다.
+export function prefetchVoice(text) {
+  if (!text || DEMO || !autoSpeakOn()) return;
+  const v = voiceSettings().voice;
+  if (v === 'device') return;
+  prepare(text, v);
 }

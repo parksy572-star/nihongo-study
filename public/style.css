@@ -45,7 +45,9 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; touch-action: manipulation; }
+/* 두 번 탭해도 확대되지 않게(두 손가락 확대는 그대로) */
+body, button, a, input, select, textarea, label, [role="button"] { touch-action: manipulation; }
 body {
   background: var(--bg); color: var(--ink);
   font: var(--fs)/1.6 var(--font);
@@ -243,7 +245,7 @@ button.busy { position: relative; }
 /* ---------- 단어 (리스트형) ---------- */
 .w-row { display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; border-bottom: 1px solid var(--line); min-width: 0; cursor: pointer; user-select: none; -webkit-user-select: none; }
 .w-row:last-child { border-bottom: 0; }
-.w-row .w-orig { font-family: var(--jp); font-size: 1.15em; font-weight: 700; flex: none; max-width: 45%; overflow-wrap: anywhere; }
+.w-row .w-orig { font-family: var(--jp); font-size: 1.15em; font-weight: 400; flex: none; max-width: 45%; overflow-wrap: anywhere; }
 .w-row .w-side { display: grid; gap: 0; min-width: 0; flex: 1; }
 .w-row .w-furi { font-family: var(--jp); font-size: .82em; color: var(--muted); overflow-wrap: anywhere; }
 .w-row .w-mean { font-size: .92em; overflow-wrap: anywhere; }
@@ -259,7 +261,7 @@ ruby.hide-rt rt { visibility: hidden; }
 .w-card .lv { position: absolute; left: 14px; top: 14px; }
 .w-card .corner { position: absolute; right: 8px; top: 8px; display: flex; }
 .w-card .pos { position: absolute; right: 12px; bottom: 12px; font-size: 12px; color: var(--accent-strong); border: 1px solid var(--accent); border-radius: 999px; padding: 0 8px; background: var(--surface); }
-.w-card .big-word { font-family: var(--jp); font-size: clamp(34px, 11vw, 52px); font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; margin-top: 30px; }
+.w-card .big-word { font-family: var(--jp); font-size: clamp(34px, 11vw, 52px); font-weight: 400; line-height: 1.25; overflow-wrap: anywhere; margin-top: 30px; }
 .w-card .big-word rt { font-size: .38em; }
 .w-card .meaning { font-size: 1.2em; min-height: 1.6em; }
 .w-card .ex { font-family: var(--jp); font-size: 1.1em; line-height: 2.1; overflow-wrap: anywhere; }
@@ -293,6 +295,14 @@ ruby.hide-rt rt { visibility: hidden; }
 .toast { background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; box-shadow: var(--shadow); animation: toastin .2s ease; text-align: center; }
 .toast.err { background: var(--bad); color: #fff; }
 .toast.out { opacity: 0; transition: opacity .3s; }
+.toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 12px; }
+.toast-btn { background: transparent; border: 0; color: var(--accent); font-weight: 700; padding: 4px 6px; min-height: 0; }
+/* 단어 여러 개 선택 */
+.w-row.sel { cursor: pointer; }
+.w-row.sel input[type=checkbox] { flex: none; }
+.w-row.sel.on { background: var(--accent-soft); }
+.select-bar { position: sticky; bottom: calc(var(--tabs-h) + 10px + env(safe-area-inset-bottom)); z-index: 6; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); }
+@media (min-width: 900px) { .select-bar { bottom: 16px; } }
 @keyframes toastin { from { opacity: 0; transform: translateY(6px); } }
 
 /* ---------- 한자 정보 창 ---------- */
@@ -341,7 +351,7 @@ svg.strokes text.on { font-weight: 800; fill: var(--bad); }
 .tcard .t-ex-ko { font-size: .92em; color: var(--muted); min-height: 1.4em; }
 .tcard .t-word .k, .tcard .t-ex .k { cursor: pointer; }
 .tcard .streak { position: absolute; left: 14px; bottom: 14px; font-size: 12px; color: var(--muted); }
-.tcard .t-word { font-family: var(--jp); font-size: clamp(40px, 14vw, 72px); font-weight: 700; line-height: 1.2; overflow-wrap: anywhere; }
+.tcard .t-word { font-family: var(--jp); font-size: clamp(40px, 14vw, 72px); font-weight: 400; line-height: 1.2; overflow-wrap: anywhere; }
 .tcard .t-word rt { font-size: .32em; }
 .tcard .t-mean { font-size: 1.25em; margin-top: 8px; }
 .tcard .t-body { display: grid; gap: 8px; justify-items: center; max-width: 100%; }
@@ -459,3 +469,11 @@ svg.strokes text.on { font-weight: 800; fill: var(--bad); }
   main { padding-left: 12px; padding-right: 12px; }
   .seg button { padding: 6px 9px; }
 }
+
+/* 문법 자유 정리 본문 */
+.free-body { display: grid; gap: 2px; font-size: 1.02em; line-height: 1.9; overflow-wrap: anywhere; }
+.free-body p { margin: 0; white-space: pre-wrap; }
+.free-body .blank-line { min-height: .8em; }
+.tcard .t-pattern { font-size: clamp(28px, 8vw, 44px); }
+.tcard .t-blank { font-size: 1.3em; }
+.blank-slot { display: inline-block; min-width: 3em; border-bottom: 2px solid var(--accent); color: transparent; }

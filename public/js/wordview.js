@@ -3,7 +3,7 @@
 
 import { h, icon, go, longPress, copyText, choiceDialog, confirmDialog, isKanjiChar, toast, replace } from './core.js';
 import { db } from './db.js';
-import { speak } from './tts.js';
+import { speak, autoSpeakOn } from './tts.js';
 import { openKanji } from './kanji.js';
 import { alignFurigana, parseRuby } from './kana.js';
 import { furi, rubyNodes } from './furigana.js';
@@ -134,32 +134,90 @@ export function wordCard(r, hide) {
       d.pos && h('span', { class: 'pos' }, d.pos));
   };
   draw();
-  el.addEventListener('click', () => { if (!hide) return; step = (step + 1) % 3; draw(); });
+  el.addEventListener('click', () => {
+    if (!hide) return;
+    step = (step + 1) % 3;
+    draw();
+    if (step === 1 && autoSpeakOn()) speak(d.furigana || d.orig).catch(() => {});
+  });
   longPress(el, () => wordMenu(r));
   return el;
 }
 
 /* ---------------- 목록 + 보기 형식 전환 + 테스트 시작 ---------------- */
 
-export function wordList(screen, getRows, { onTest, empty, bar: withBar = true } = {}) {
+// 선택 모드의 한 줄: 체크 칸 + 레벨 + 원문 + 뜻. 누르면 선택/해제.
+function selectRow(r, selected, onToggle) {
+  const d = r.data;
+  const cb = h('input', { type: 'checkbox', checked: selected.has(r.id), 'aria-label': `${d.orig} 선택` });
+  const el = h('div', { class: ['w-row', 'sel', selected.has(r.id) && 'on'] }, cb, levelBadge(d.level),
+    h('span', { class: 'w-orig' }, d.orig),
+    h('span', { class: 'w-side' }, h('span', { class: 'w-furi' }, d.furigana || ''), h('span', { class: 'w-mean' }, d.meaning || '')));
+  const toggle = () => {
+    if (selected.has(r.id)) selected.delete(r.id); else selected.add(r.id);
+    cb.checked = selected.has(r.id);
+    el.classList.toggle('on', cb.checked);
+    onToggle();
+  };
+  el.addEventListener('click', (e) => { if (e.target !== cb) e.preventDefault(); toggle(); });
+  return el;
+}
+
+export function wordList(screen, getRows, { onTest, empty, bar: withBar = true, onDeleteSelected } = {}) {
   let mode = viewMode(screen);
+  let selected = null; // 선택 모드일 때 Set(id)
+  let lastRows = [];
   const box = h('div');
+  const selCount = h('b');
+  const allCb = h('input', { type: 'checkbox', 'aria-label': '보이는 단어 모두 선택' });
+  const delBtn = h('button', { type: 'button', class: 'danger small' }, icon('trash', 14), '선택 삭제');
+  const paintSel = () => {
+    selCount.textContent = `${selected?.size || 0}개 선택`;
+    delBtn.disabled = !selected?.size;
+    allCb.checked = !!selected && lastRows.length > 0 && lastRows.every((r) => selected.has(r.id));
+  };
+  allCb.addEventListener('change', () => {
+    if (allCb.checked) lastRows.forEach((r) => selected.add(r.id)); else lastRows.forEach((r) => selected.delete(r.id));
+    draw();
+  });
+  delBtn.addEventListener('click', () => onDeleteSelected?.([...selected]));
+  const selBar = h('div', { class: 'select-bar' },
+    h('label', { class: 'check' }, allCb, h('span', null, '보이는 단어 모두')),
+    selCount,
+    h('div', { class: 'row' }, h('button', { type: 'button', class: 'ghost small', onclick: () => api.stopSelect() }, '취소'), delBtn));
+
   const draw = () => {
     const rows = getRows();
+    lastRows = rows;
     const hide = hideDefault(mode);
-    if (!rows.length) { replace(box, empty || h('p', { class: 'empty' }, '단어가 없어요.')); return; }
+    if (!rows.length) { replace(box, empty || h('p', { class: 'empty' }, '단어가 없어요.')); if (selected) paintSel(); return; }
     const shown = rows.slice(0, 600);
-    replace(box,
-      mode === 'list'
-        ? h('div', { class: 'list' }, shown.map((r) => wordRow(r, hide)))
-        : h('div', { class: 'cards' }, shown.map((r) => wordCard(r, hide))),
-      rows.length > shown.length && h('p', { class: 'hint center' }, `앞의 ${shown.length}개만 보여요. 검색·필터로 좁혀 보세요.`));
+    if (selected) {
+      // 선택 모드는 보기 형식과 관계없이 간단한 목록으로 보여준다
+      for (const id of [...selected]) if (!rows.some((r) => r.id === id)) selected.delete(id);
+      replace(box, h('div', { class: 'list' }, shown.map((r) => selectRow(r, selected, paintSel))));
+      paintSel();
+    } else {
+      replace(box,
+        mode === 'list'
+          ? h('div', { class: 'list' }, shown.map((r) => wordRow(r, hide)))
+          : h('div', { class: 'cards' }, shown.map((r) => wordCard(r, hide))),
+        rows.length > shown.length && h('p', { class: 'hint center' }, `앞의 ${shown.length}개만 보여요. 검색·필터로 좁혀 보세요.`));
+    }
   };
-  draw();
   const bar = withBar && h('div', { class: 'bottom-bar' },
     viewToggle(screen, (m) => { mode = m; draw(); }),
     onTest && h('button', { type: 'button', class: 'fab', onclick: onTest }, icon('layers', 18), '테스트 시작'));
-  return { el: h('div', { class: 'stack' }, box, bar), redraw: draw };
+  const wrap = h('div', { class: 'stack' }, box, bar);
+  const api = {
+    el: wrap,
+    redraw: draw,
+    get selecting() { return !!selected; },
+    startSelect() { selected = new Set(); if (bar) bar.replaceWith(selBar); else wrap.append(selBar); draw(); },
+    stopSelect() { selected = null; if (bar) selBar.replaceWith(bar); else selBar.remove(); draw(); },
+  };
+  draw();
+  return api;
 }
 
 export { rubyNodes };
