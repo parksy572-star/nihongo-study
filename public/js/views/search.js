@@ -6,7 +6,7 @@ import { db } from '../db.js';
 import { kataToHira, isKanaOnly, isRomaji, romajiToHira, hangulMatch } from '../kana.js';
 import { wordList } from '../wordview.js';
 import { startTest } from './test.js';
-import { openKanji, kanjiData, myKanji } from '../kanji.js';
+import { openKanji, kanjiData, loadHun, kanjiName } from '../kanji.js';
 import { furi } from '../furigana.js';
 
 const SCOPES = [['all', '전체'], ['word', '단어'], ['kanji', '한자'], ['grammar', '문법'], ['talk', '회화·면접'], ['writing', '작문']];
@@ -33,6 +33,9 @@ export async function searchWords(raw) {
     }
     // 한자 훈음: '들일 납' → 納 → 納이 들어간 단어
     const chars = db.all('kanji').filter((k) => k.data.hun && (k.data.hun.replace(/\s/g, '').includes(qq) || k.data.hun.includes(q))).map((k) => k.data.char);
+    if (qq.length >= 2) {
+      for (const [c, hun] of Object.entries(await loadHun())) if (hun.replace(/\s/g, '').includes(qq) && !chars.includes(c)) chars.push(c);
+    }
     for (const r of words) if (chars.some((c) => r.data.orig.includes(c))) out.hun.push({ r, score: 1 });
   }
   for (const k of Object.keys(out)) out[k] = out[k].sort((a, b) => b.score - a.score || a.r.data.orig.length - b.r.data.orig.length).map((x) => x.r);
@@ -88,7 +91,7 @@ export function searchView(_p, query, ctx) {
       }
       if (my !== seq) return;
       if (chars.size) parts.push(h('div', { class: 'stack tight' }, h('h3', { class: 'group-title' }, `한자 ${chars.size}`),
-        h('div', { class: 'parts' }, [...chars].map((c) => h('button', { type: 'button', class: 'part', onclick: () => openKanji(c) }, h('span', { class: 'pc' }, c), h('span', { class: 'pn' }, myKanji(c)?.data?.hun || '보기'))))));
+        h('div', { class: 'parts' }, [...chars].map((c) => h('button', { type: 'button', class: 'part', onclick: () => openKanji(c) }, h('span', { class: 'pc' }, c), h('span', { class: 'pn' }, kanjiName(c) || '보기'))))));
     }
     const textHit = (s) => String(s || '').includes(q) || kataToHira(String(s || '')).includes(kataToHira(q));
     if (want('grammar')) {

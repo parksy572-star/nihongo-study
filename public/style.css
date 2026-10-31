@@ -477,3 +477,7 @@ svg.strokes text.on { font-weight: 800; fill: var(--bad); }
 .tcard .t-pattern { font-size: clamp(28px, 8vw, 44px); }
 .tcard .t-blank { font-size: 1.3em; }
 .blank-slot { display: inline-block; min-width: 3em; border-bottom: 2px solid var(--accent); color: transparent; }
+.tcard .t-kanji { font-size: clamp(84px, 30vw, 132px); line-height: 1.15; }
+.k-reads { display: grid; gap: 4px; justify-items: center; }
+.k-read { display: flex; gap: 8px; align-items: baseline; justify-content: center; flex-wrap: wrap; font-size: 1.05em; max-width: 100%; overflow-wrap: anywhere; }
+.k-label { font-size: 12px; color: var(--muted); flex: none; }

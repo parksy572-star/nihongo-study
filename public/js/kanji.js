@@ -9,6 +9,8 @@ const SHARDS = 32;
 const shardCache = new Map();
 let radicals = null;
 let joyo = null;
+let hunMap = null;       // 상용한자 한국어 훈음 기본값 (불러오기 Promise)
+let hunLoaded = {};      // 불러온 뒤의 값
 
 async function shard(i) {
   if (!shardCache.has(i)) {
@@ -31,13 +33,21 @@ async function radicalList() {
   return radicals;
 }
 
+// 상용한자 훈음 기본값(libhangul). 내가 입력한 훈음이 있으면 그것을 먼저 쓴다.
+export async function loadHun() {
+  if (!hunMap) {
+    hunMap = fetch('/data/kanji/hun.json').then((r) => r.json()).catch(() => ({})).then((m) => { hunLoaded = m; return m; });
+  }
+  return hunMap;
+}
+
 // 내가 입력한 한자 정보 (훈음·메모·링크)
 export function myKanji(ch) { return db.one('kanji', (d) => d.char === ch); }
 export function saveMyKanji(ch, patch) {
   const r = myKanji(ch);
   return db.put('kanji', { char: ch, ...(r?.data || {}), ...patch }, r?.id);
 }
-export function kanjiName(ch) { return myKanji(ch)?.data?.hun || ''; }
+export function kanjiName(ch) { return myKanji(ch)?.data?.hun || hunLoaded[ch] || ''; }
 
 export const kanjiOf = (text) => [...new Set([...String(text || '')].filter(isKanjiChar))];
 
@@ -48,7 +58,7 @@ export function wordsWithKanji(ch) {
 export const naverSearchUrl = (ch) => `https://ja.dict.naver.com/#/search?query=${encodeURIComponent(ch)}&range=letter`;
 export const nihongoSearchUrl = (ch) => `https://www.google.com/search?q=${encodeURIComponent(`site:nihongokanji.com 「${ch}」`)}`;
 
-const readingText = (r) => r.replace(/\./g, '(') + (r.includes('.') ? ')' : '');
+export const readingText = (r) => r.replace(/\./g, '(') + (r.includes('.') ? ')' : '');
 
 /* ---------------- 획순 그림 ---------------- */
 
@@ -120,14 +130,14 @@ export async function openKanji(ch) {
   if (currentSheet && !currentSheet.closed) currentSheet.setContent(content);
   else currentSheet = openSheet(content);
   const sheet = currentSheet;
-  const [d, rads] = await Promise.all([kanjiData(ch), radicalList()]);
+  const [d, rads] = await Promise.all([kanjiData(ch), radicalList(), loadHun()]);
   if (sheet.closed) return;
   sheet.setContent(kanjiPanel(ch, d, rads, sheet));
 }
 
 function kanjiPanel(ch, d, rads, sheet) {
   const mine = myKanji(ch)?.data || {};
-  const hun = h('input', { value: mine.hun || '', placeholder: d?.ko?.length ? `예: ○○ ${d.ko[0]}` : '훈음 (예: 이을 계)', style: { maxWidth: '180px' } });
+  const hun = h('input', { value: mine.hun || '', placeholder: hunLoaded[ch] || (d?.ko?.length ? `예: ○○ ${d.ko[0]}` : '훈음 (예: 이을 계)'), style: { maxWidth: '180px' } });
   const saveHun = debounce(() => saveMyKanji(ch, { hun: hun.value.trim() }), 600);
   hun.addEventListener('input', saveHun);
   hun.addEventListener('blur', () => saveHun.flush());
@@ -220,7 +230,7 @@ function kanjiPanel(ch, d, rads, sheet) {
           h('div', { class: 'row end' },
             h('button', { type: 'button', class: 'ghost small', onclick: resetUrls }, '기본 주소로'),
             h('button', { type: 'button', class: 'small', onclick: saveUrls }, '저장'))))),
-    h('p', { class: 'credit' }, '한자 데이터: KANJIDIC2 (EDRDG, CC BY-SA 4.0) · 획순: KanjiVG (© Ulrich Apel, CC BY-SA 3.0) · 표외 표시: 常用漢字表(2010) 대조'));
+    h('p', { class: 'credit' }, '한자 데이터: KANJIDIC2 (EDRDG, CC BY-SA 4.0) · 획순: KanjiVG (© Ulrich Apel, CC BY-SA 3.0) · 표외 표시: 常用漢字表(2010) 대조 · 훈음 기본값: libhangul (BSD)'));
 }
 
 // 글 속 한자를 눌러 정보 창을 여는 요소로 만든다
