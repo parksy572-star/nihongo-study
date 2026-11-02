@@ -1,11 +1,13 @@
 # 한자 데이터 만들기 (개발용, 사이트에는 결과 JSON만 올라간다)
 #
-#   python3 -I tools/build_kanji.py <kanjidic2.xml> <kanjivg.xml> <常用漢字一覧.wiki> public/data/kanji
+#   python3 -I tools/build_kanji.py <kanjidic2.xml> <kanjivg.xml> <常用漢字一覧.wiki> public/data/kanji [hanja.txt]
 #
 # - kanjidic2.xml : https://www.edrdg.org/kanjidic/kanjidic2.xml.gz (EDRDG, CC BY-SA 4.0)
 # - kanjivg.xml   : https://github.com/KanjiVG/kanjivg/releases (© Ulrich Apel, CC BY-SA 3.0)
 # - 常用漢字一覧.wiki : https://ja.wikipedia.org/wiki/常用漢字一覧 (action=raw, CC BY-SA 4.0)
 #   常用漢字表(2010)의 음훈과 대조해 '표외' 읽기를 표시하는 데 쓴다.
+# - hanja.txt : https://github.com/libhangul/libhangul (data/hanja/hanja.txt, BSD 3-Clause, © Choe Hwanjin)
+#   상용한자의 한국어 훈음 기본값(hun.json)을 만든다. 일본 신자체는 구자체로도 찾는다.
 #
 # 결과: 한자를 코드포인트 % 32 로 나눈 32개 파일(00.json ~ 31.json) + radicals.json + joyo.txt(상용한자 2136자)
 import json
@@ -149,8 +151,48 @@ def parse_kanjivg(path):
     return out
 
 
+# hanja.txt에 훈이 비었거나 일본 고유 한자라 찾을 수 없는 글자의 기본값
+HUN_MANUAL = {
+    '丼': '우물 정, 덮밥 정', '働': '일할 동', '咲': '필 소', '強': '강할 강', '惧': '두려워할 구', '捗': '칠 척',
+    '枠': '틀 화', '柿': '감나무 시', '毀': '헐 훼', '滝': '폭포 롱', '潤': '불을 윤', '畝': '밭이랑 묘',
+    '舗': '펼 포, 가게 포', '艦': '싸움배 함', '購': '살 구', '込': '담을 입', '駄': '실을 태, 짐 실을 타', '𠮟': '꾸짖을 질',
+}
+
+HUN = re.compile(r'^[가-힣][가-힣 ·]*\s[가-힣]$')
+
+
+def parse_hanja(path):
+    """{한자: [(한글 음, 훈음 문장), ...]} — 한 글자 항목만"""
+    out = {}
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            parts = line.rstrip('\n').split(':')
+            if len(parts) < 3 or len(parts[1]) != 1:
+                continue
+            out.setdefault(parts[1], []).append((parts[0], parts[2].strip()))
+    return out
+
+
+def hun_for(ch, kd_entry, old, hanja):
+    """한국 음(KANJIDIC2)이 맞는 항목을 우선해 훈음 최대 2개. 신자체에 없으면 구자체로 찾는다."""
+    ko = (kd_entry or {}).get('ko') or []
+    for c in [ch] + ([old] if old else []) + ((kd_entry or {}).get('v') or []):
+        rows = [(h, t) for h, t in hanja.get(c, []) if t]
+        # KANJIDIC2의 한국 음 순서를 따른다(行: 행 → 항, 食: 식 → 사)
+        rows.sort(key=lambda x: ko.index(x[0]) if x[0] in ko else len(ko))
+        for _, text in rows:
+            senses = [x.strip() for x in text.split(',')]
+            senses = [x for x in senses if HUN.match(x)]
+            if senses:
+                return ', '.join(list(dict.fromkeys(senses))[:2])
+    return ''
+
+
 def main():
     kd_path, kvg_path, joyo_path, out_dir = sys.argv[1:5]
+    hanja_path = sys.argv[5] if len(sys.argv) > 5 else None
     joyo = parse_joyo(joyo_path)
     print('常用漢字:', len(joyo))
     kd = parse_kanjidic(kd_path)
@@ -223,6 +265,14 @@ def main():
         with open(os.path.join(out_dir, f'{i:02d}.json'), 'w', encoding='utf-8') as f:
             json.dump(s, f, ensure_ascii=False, separators=(',', ':'))
         total += len(s)
+    if hanja_path:
+        hanja = parse_hanja(hanja_path)
+        hun = {ch: HUN_MANUAL.get(ch) or hun_for(ch, kd.get(ch), joyo[ch][0], hanja) for ch in sorted(joyo)}
+        missing = [c for c, v in hun.items() if not v]
+        hun = {c: v for c, v in hun.items() if v}
+        with open(os.path.join(out_dir, 'hun.json'), 'w', encoding='utf-8') as f:
+            json.dump(hun, f, ensure_ascii=False, separators=(',', ':'))
+        print(f'훈음 {len(hun)}자 / 없음 {len(missing)}자: {"".join(missing)}')
     with open(os.path.join(out_dir, 'joyo.txt'), 'w', encoding='utf-8') as f:
         f.write(''.join(sorted(joyo)))
     radicals = []

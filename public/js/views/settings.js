@@ -86,7 +86,7 @@ export function settingsView(_p, _q, ctx) {
         h('div', { class: 'row wrap' },
           h('a', { class: 'btn ghost small', href: '/check.html' }, '0단계 점검 페이지'),
           h('button', { type: 'button', class: 'ghost small', onclick: async () => { if (await confirmDialog('로그아웃할까요?')) db.signOut(); } }, '로그아웃'))),
-      h('p', { class: 'credit' }, '한자 데이터: KANJIDIC2 (EDRDG, CC BY-SA 4.0) · 획순: KanjiVG (© Ulrich Apel, CC BY-SA 3.0) · 상용 음훈: 文化庁「常用漢字表」(2010)·위키백과 常用漢字一覧(CC BY-SA 4.0) 대조'));
+      h('p', { class: 'credit' }, '한자 데이터: KANJIDIC2 (EDRDG, CC BY-SA 4.0) · 획순: KanjiVG (© Ulrich Apel, CC BY-SA 3.0) · 상용 음훈: 文化庁「常用漢字表」(2010)·위키백과 常用漢字一覧(CC BY-SA 4.0) 대조 · 한국어 훈음 기본값: libhangul (© Choe Hwanjin, BSD)'));
   };
   draw();
   ctx.onDb((e) => { if (e.kind === 'settings' && e.remote) draw(); });

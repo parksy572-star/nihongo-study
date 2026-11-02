@@ -1,14 +1,13 @@
 // 단어 테스트: 오른쪽(앎)으로 넘길 때까지, 왼쪽(모름)으로 넘긴 카드만 판마다 다시 섞어 나온다.
 // 진행 상태(판·남은 더미·경과 시간)는 카드를 넘길 때마다 progress('test')에 저장 → 다른 기기에서 이어서.
 
-import { h, icon, go, replace, toast, modal, mmss, copyText, store, emptyState, segmented, chipToggle, fmtDate } from '../core.js';
+import { h, icon, go, replace, toast, modal, mmss, copyText, store, emptyState, segmented, chipToggle, fmtDate, debounce } from '../core.js';
 import { db } from '../db.js';
 import { speak, autoSpeakOn, prefetchVoice } from '../tts.js';
 import { RoundDeck } from '../deck.js';
 import { streakSetting, soundToggle } from '../prefs.js';
-import { openKanji, kanjiData, kanjiName } from '../kanji.js';
+import { openKanji, kanjiData, kanjiName, loadHun, loadJoyo, readingText } from '../kanji.js';
 import { levelBadge, wordOrig, exampleNode, centerLine, speakBtn, copyBtn, kanjiSpans } from '../wordview.js';
-import { isKanjiChar } from '../core.js';
 import { furi } from '../furigana.js';
 
 /* ---------------- 시작 ---------------- */
@@ -35,11 +34,17 @@ export async function startTest({ ids, title, type = 'words' }) {
   store.set('testLimit', limit);
   const pick = limit === 'all' ? ids : [...ids].sort(() => Math.random() - 0.5).slice(0, limit);
   db.saveProgress('test', {
-    title, testType: type, ids: pick, // type은 진행 상태 칸 이름으로 쓰여 testType에 둔다
+    title, testType: type, // type은 진행 상태 칸 이름으로 쓰여 testType에 둔다
     deck: new RoundDeck({ ids: pick, streak: streakSetting() }).state,
     startedAt: new Date().toISOString(), elapsed: 0,
   });
   go('/test/run');
+}
+
+async function startJoyoTest() {
+  const joyo = await loadJoyo();
+  if (!joyo.size) { toast('상용한자 목록을 불러오지 못했어요', 'err'); return; }
+  startTest({ ids: [...joyo].map((c) => 'k:' + c), title: '상용한자', type: 'kanji' });
 }
 
 /* ---------------- 테스트 첫 화면 ---------------- */
@@ -62,7 +67,12 @@ export function testHomeView(_p, _q, ctx) {
           h('div', { class: 'row' },
             h('button', { type: 'button', class: 'ghost small', onclick: () => db.clearProgress('test') }, '그만두기'),
             h('button', { type: 'button', onclick: () => go('/test/run') }, '이어서')))),
-      !words.length ? emptyState('단어를 등록하면 테스트할 수 있어요.', h('button', { type: 'button', onclick: () => go('/words/new') }, '단어 등록')) :
+      h('div', { class: 'panel stack' },
+        h('h2', null, '한자 테스트'),
+        h('p', { class: 'hint' }, '한자만 보고, 한 번 누르면 위에 음독·훈독, 아래에 한국어 훈음이 나와요.'),
+        h('button', { type: 'button', class: 'plain', style: { justifyContent: 'space-between' }, onclick: startJoyoTest },
+          h('span', null, '상용한자 전체'), h('span', { class: 'muted small' }, '2136자'))),
+      !words.length ? emptyState('단어를 등록하면 단어 테스트를 할 수 있어요.', h('button', { type: 'button', onclick: () => go('/words/new') }, '단어 등록')) :
         h('div', { class: 'panel stack' },
           h('h2', null, '테스트 범위'),
           h('p', { class: 'hint' }, '단어장·한자별 모음·검색 결과 화면의 \'테스트 시작\'으로 지금 보이는 목록 그대로 테스트할 수도 있어요.'),
@@ -83,7 +93,7 @@ export function testHomeView(_p, _q, ctx) {
   };
   draw();
   ctx.onDb((e) => { if (['progress', 'word', 'log'].includes(e.kind) || e.type === 'reset') draw(); });
-  return { el, title: '단어 테스트' };
+  return { el, title: '테스트' };
 }
 
 /* ---------------- 카드 ---------------- */
@@ -110,16 +120,19 @@ async function cardFor(id) {
   }
   if (String(id).startsWith('k:')) {
     const ch = id.slice(2);
-    const d = await kanjiData(ch);
+    const [d] = await Promise.all([kanjiData(ch), loadHun()]);
+    const uniq = (list) => [...new Set(list)];
+    const on = uniq(d?.on || []);
+    const kun = uniq((d?.kun || []).filter((r) => !r.startsWith('-') && !r.endsWith('-')).map(readingText));
     return {
-      kind: 'kanji', id, front: ch, char: ch,
-      furigana: d ? [...(d.kun || []).slice(0, 2).map((r) => r.replace(/\..*/, '')), ...(d.on || []).slice(0, 2)].join('・') : '',
-      meaning: kanjiName(ch) || (d?.ko?.length ? `음: ${d.ko.join(', ')}` : '한자'),
+      kind: 'kanji', id, front: ch, on, kun,
+      read: (kun[0] || on[0] || ch).replace(/[()]/g, ''),
+      meaning: kanjiName(ch) || (d?.ko?.length ? `음: ${d.ko.join(', ')}` : ''),
     };
   }
   const r = db.get(id);
   if (!r) return null;
-  return { kind: 'word', id, front: r.data.orig, furigana: r.data.furigana, meaning: r.data.meaning, level: r.data.level, row: r, char: [...r.data.orig].find(isKanjiChar) };
+  return { kind: 'word', id, front: r.data.orig, furigana: r.data.furigana, meaning: r.data.meaning, level: r.data.level, row: r };
 }
 
 export function testRunView(_p, query, ctx) {
@@ -128,7 +141,7 @@ export function testRunView(_p, query, ctx) {
     store.del('pendingTest');
     if (pend?.type === 'kanji') {
       const ids = pend.chars.map((c) => 'k:' + c);
-      db.saveProgress('test', { title: pend.title, testType: 'kanji', ids, deck: new RoundDeck({ ids, streak: streakSetting() }).state, startedAt: new Date().toISOString(), elapsed: 0 });
+      db.saveProgress('test', { title: pend.title, testType: 'kanji', deck: new RoundDeck({ ids, streak: streakSetting() }).state, startedAt: new Date().toISOString(), elapsed: 0 });
       history.replaceState(null, '', '#/test/run');
     }
   }
@@ -138,7 +151,14 @@ export function testRunView(_p, query, ctx) {
   const deck = new RoundDeck({ state: st.deck });
   let resumedAt = Date.now();
   const elapsed = () => st.elapsed + (Date.now() - resumedAt) / 1000;
-  const save = () => { st.deck = deck.state; const r = db.saveProgress('test', { ...st, elapsed: elapsed() }); myAt = r.data._at; };
+  const BIG = st.deck.total > 200; // 상용한자 전체처럼 큰 더미
+  const save = () => {
+    if (finished) return;
+    st.deck = deck.state;
+    const r = db.saveProgress('test', { ...st, deck: BIG ? { ...deck.state, history: [] } : deck.state, elapsed: elapsed() });
+    myAt = r.data._at;
+  };
+  const saveAfterSwipe = BIG ? debounce(save, 3000) : save;
   let myAt = null;
   let step = 0; // 0 숨김 → 1 후리가나 → 2 뜻 → 다시 숨김 (단어장 카드형과 같음)
   let finished = false;
@@ -227,29 +247,46 @@ export function testRunView(_p, query, ctx) {
       missed > 0 && st.deck.need > 1 && h('span', { class: 'streak' }, `연속 ${run}/${st.deck.need}`));
   };
 
+  // 한자 카드: 한자만 보이고, 한 번 누르면 위에 음독·훈독, 아래에 한국어 훈음
+  const paintKanji = (c, run, missed) => {
+    const shown = step >= 1;
+    replace(cardEl,
+      h('div', { class: 'tools' },
+        h('button', { type: 'button', class: 'icon-btn sm muted', title: '복사', onclick: (e) => { e.stopPropagation(); copyText(c.front); } }, icon('copy', 16)),
+        h('button', { type: 'button', class: 'icon-btn sm muted', title: '듣기', onclick: (e) => { e.stopPropagation(); speak(c.read); } }, icon('speaker', 18)),
+        h('button', { type: 'button', class: 'icon-btn sm muted', title: '한자 정보', onclick: (e) => { e.stopPropagation(); openKanji(c.front); } }, icon('book', 18))),
+      h('div', { class: 't-body' },
+        h('div', { class: ['k-reads', !shown && 'hidden-text'] },
+          h('div', { class: 'k-read' }, h('span', { class: 'k-label' }, '음독'), h('span', { class: 'jp' }, c.on.join('・') || '—')),
+          h('div', { class: 'k-read' }, h('span', { class: 'k-label' }, '훈독'), h('span', { class: 'jp' }, c.kun.join('・') || '—'))),
+        h('div', { class: 't-word t-kanji', lang: 'ja' }, c.front),
+        h('div', { class: ['t-mean', !shown && 'hidden-text'] }, c.meaning || '—')),
+      missed > 0 && st.deck.need > 1 && h('span', { class: 'streak' }, `연속 ${run}/${st.deck.need}`));
+  };
+
   const paintCard = () => {
     const c = card;
     const run = st.deck.run[c.id] || 0, missed = st.deck.missed[c.id] || 0;
     if (c.kind === 'grammar' || c.kind === 'blank') return paintGrammar(c, run, missed);
+    if (c.kind === 'kanji') return paintKanji(c, run, missed);
     const d = c.row?.data || {};
     replace(cardEl,
       levelBadge(c.level),
       h('div', { class: 'tools' },
         h('button', { type: 'button', class: 'icon-btn sm muted', title: '복사', onclick: (e) => { e.stopPropagation(); copyText(c.front); } }, icon('copy', 16)),
-        h('button', { type: 'button', class: 'icon-btn sm muted', title: '듣기', onclick: (e) => { e.stopPropagation(); speak(c.furigana?.split('・')[0] || c.front); } }, icon('speaker', 18))),
+        h('button', { type: 'button', class: 'icon-btn sm muted', title: '듣기', onclick: (e) => { e.stopPropagation(); speak(c.furigana || c.front); } }, icon('speaker', 18))),
       h('div', { class: 't-body' },
         // 한자는 한 글자씩 눌러서 그 한자의 정보 창
-        h('div', { class: 't-word', lang: 'ja' }, c.kind === 'word' ? wordOrig(c.front, c.furigana, step >= 1, true) : kanjiSpans(c.front)),
-        c.kind === 'kanji' && h('div', { class: ['jp', 'muted', step < 1 && 'hidden-text'] }, c.furigana),
+        h('div', { class: 't-word', lang: 'ja' }, wordOrig(c.front, c.furigana, step >= 1, true)),
         h('div', { class: ['t-mean', step < 2 && 'hidden-text'] }, c.meaning),
-        c.kind === 'word' && d.example && centerLine(h('span', { class: 't-ex' }, exampleNode(d, step >= 1)), copyBtn(d.example), speakBtn(d.example, '예문 듣기')),
-        c.kind === 'word' && d.example && h('div', { class: ['t-ex-ko', step < 2 && 'hidden-text'] }, d.exampleKo || '')),
+        d.example && centerLine(h('span', { class: 't-ex' }, exampleNode(d, step >= 1)), copyBtn(d.example), speakBtn(d.example, '예문 듣기')),
+        d.example && h('div', { class: ['t-ex-ko', step < 2 && 'hidden-text'] }, d.exampleKo || '')),
       missed > 0 && st.deck.need > 1 && h('span', { class: 'streak' }, `연속 ${run}/${st.deck.need}`));
   };
 
-  // 누를 때마다 후리가나 → 뜻 → 숨김. 후리가나를 열 때 단어를 읽어 준다.
+  // 누를 때마다 후리가나 → 뜻 → 숨김. 후리가나를 열 때 단어를 읽어 준다. 한자 카드는 공개/숨김 두 단계.
   const toggle = () => {
-    step = (step + 1) % 3;
+    step = card.kind === 'kanji' ? (step ? 0 : 1) : (step + 1) % 3;
     paintCard();
     if (!autoSpeakOn()) return;
     if (step === 1 && card.kind === 'word') speak(card.furigana || card.front).catch(() => {});
@@ -265,7 +302,7 @@ export function testRunView(_p, query, ctx) {
     out.style.transform = `translateX(${known ? 130 : -130}%) rotate(${known ? 18 : -18}deg)`;
     out.style.opacity = '0';
     deck.answer(known);
-    save();
+    saveAfterSwipe();
     setTimeout(() => renderCard(), fromDrag ? 180 : 230);
   };
   const undo = () => { if (deck.undo()) { save(); renderCard(); } else toast('되돌릴 카드가 없어요'); };
@@ -317,7 +354,9 @@ export function testRunView(_p, query, ctx) {
     const cb = h('input', { type: 'checkbox' });
     const ov = h('div', { class: 'overlay-help' },
       h('label', { class: 'bubble check', style: { justifySelf: 'start' } }, cb, '다시 보지 않기'),
-      h('div', { class: 'bubble', style: { justifySelf: 'center' } }, '1 카드 누름 → 후리가나 & 단어 음성', h('br'), '2 한 번 더 → 뜻', h('br'), '3 한 번 더 → 숨김', h('br'), '한자를 누르면 그 한자의 정보'),
+      st.testType === 'kanji'
+        ? h('div', { class: 'bubble', style: { justifySelf: 'center' } }, '카드 누름 → 음독·훈독과 훈음', h('br'), '한 번 더 → 숨김', h('br'), '오른쪽 위 책 버튼 → 한자 정보')
+        : h('div', { class: 'bubble', style: { justifySelf: 'center' } }, '1 카드 누름 → 후리가나 & 단어 음성', h('br'), '2 한 번 더 → 뜻', h('br'), '3 한 번 더 → 숨김', h('br'), '한자를 누르면 그 한자의 정보'),
       h('div', { class: 'row between' }, h('div', { class: 'bubble' }, '모르는 단어는', h('br'), '왼쪽으로 스와이프!'), h('div', { class: 'bubble' }, '아는 단어는', h('br'), '오른쪽으로 스와이프!')),
       h('div', { class: 'row between' }, h('div', { class: 'bubble small' }, `연속 정답 x${st.deck.need}: 모른다고 한 단어는 ${st.deck.need}번 연속 맞혀야 끝나요`),
         h('button', { type: 'button', onclick: () => { if (cb.checked) db.setSettings({ testHelpSeen: true }); ov.remove(); } }, '시작')));
@@ -340,16 +379,16 @@ export function testRunView(_p, query, ctx) {
     replace(el, h('div', { class: 'panel stack' },
       h('h2', null, '테스트 완료!'),
       h('div', { class: 'stat' },
-        h('div', null, h('b', null, st.deck.total), h('span', null, st.testType === 'grammar' ? '문제' : '단어')),
+        h('div', null, h('b', null, st.deck.total), h('span', null, st.testType === 'grammar' ? '문제' : st.testType === 'kanji' ? '한자' : '단어')),
         h('div', null, h('b', null, mmss(seconds)), h('span', null, '걸린 시간')),
         h('div', null, h('b', null, st.deck.round), h('span', null, '판'))),
-      hard.length > 0 && h('h3', { class: 'group-title' }, st.testType === 'grammar' ? '여러 번 모른다고 한 문법' : '여러 번 모른다고 한 단어'),
+      hard.length > 0 && h('h3', { class: 'group-title' }, st.testType === 'grammar' ? '여러 번 모른다고 한 문법' : st.testType === 'kanji' ? '여러 번 모른다고 한 한자' : '여러 번 모른다고 한 단어'),
       hard.length > 0 && h('div', { class: 'list' }, hard.map(({ id, n }) => {
         const r = db.get(id);
         const g = grammarRef(id);
         const gd = g?.r?.data;
         const label = r ? r.data.orig : gd ? (g.i != null ? (gd.examples?.[g.i]?.ja || gd.pattern) : gd.pattern) : id.replace(/^k:/, '');
-        const sub = r ? `${r.data.furigana} · ${r.data.meaning}` : gd ? `${gd.pattern} · ${gd.meaning || ''}` : '한자';
+        const sub = r ? `${r.data.furigana} · ${r.data.meaning}` : gd ? `${gd.pattern} · ${gd.meaning || ''}` : (kanjiName(label) || '한자');
         return h('div', { class: 'item' },
           h('div', { class: 'item-main' }, h('span', { class: 'item-title jp' }, label), h('span', { class: 'item-sub' }, sub)),
           h('span', { class: 'tag bad' }, `${n}번`),
@@ -357,7 +396,7 @@ export function testRunView(_p, query, ctx) {
       })),
       h('div', { class: 'row wrap' },
         h('button', { type: 'button', onclick: () => go('/test') }, '테스트 홈'),
-        hard.length > 0 && h('button', { type: 'button', class: 'ghost', onclick: () => startTest({ ids: hard.map((x) => x.id), title: st.title + ' · 다시', type: st.testType }) }, st.testType === 'grammar' ? '어려운 것만 다시' : '어려운 단어만 다시'))));
+        hard.length > 0 && h('button', { type: 'button', class: 'ghost', onclick: () => startTest({ ids: hard.map((x) => x.id), title: st.title + ' · 다시', type: st.testType }) }, st.testType === 'words' || !st.testType ? '어려운 단어만 다시' : '어려운 것만 다시'))));
   };
 
   // 다른 기기에서 넘긴 진행 상태가 들어오면 반영
