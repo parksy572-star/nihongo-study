@@ -9,6 +9,7 @@ import { streakSetting, soundToggle } from '../prefs.js';
 import { openKanji, kanjiData, kanjiName, loadHun, loadJoyo, readingText } from '../kanji.js';
 import { levelBadge, wordOrig, exampleNode, centerLine, speakBtn, copyBtn, kanjiSpans } from '../wordview.js';
 import { furi } from '../furigana.js';
+import { kataToHira } from '../kana.js';
 
 /* ---------------- 시작 ---------------- */
 
@@ -69,7 +70,7 @@ export function testHomeView(_p, _q, ctx) {
             h('button', { type: 'button', onclick: () => go('/test/run') }, '이어서')))),
       h('div', { class: 'panel stack' },
         h('h2', null, '한자 테스트'),
-        h('p', { class: 'hint' }, '한자만 보고, 한 번 누르면 위에 음독·훈독, 아래에 한국어 훈음이 나와요.'),
+        h('p', { class: 'hint' }, '한자만 보고, 빈 곳을 누르면 위에 음독·훈독, 아래에 한국어 훈음이 나와요. 한자를 누르면 한자 정보가 열려요.'),
         h('button', { type: 'button', class: 'plain', style: { justifyContent: 'space-between' }, onclick: startJoyoTest },
           h('span', null, '상용한자 전체'), h('span', { class: 'muted small' }, '2136자'))),
       !words.length ? emptyState('단어를 등록하면 단어 테스트를 할 수 있어요.', h('button', { type: 'button', onclick: () => go('/words/new') }, '단어 등록')) :
@@ -122,7 +123,7 @@ async function cardFor(id) {
     const ch = id.slice(2);
     const [d] = await Promise.all([kanjiData(ch), loadHun()]);
     const uniq = (list) => [...new Set(list)];
-    const on = uniq(d?.on || []);
+    const on = uniq((d?.on || []).map(kataToHira));
     const kun = uniq((d?.kun || []).filter((r) => !r.startsWith('-') && !r.endsWith('-')).map(readingText));
     return {
       kind: 'kanji', id, front: ch, on, kun,
@@ -247,19 +248,18 @@ export function testRunView(_p, query, ctx) {
       missed > 0 && st.deck.need > 1 && h('span', { class: 'streak' }, `연속 ${run}/${st.deck.need}`));
   };
 
-  // 한자 카드: 한자만 보이고, 한 번 누르면 위에 음독·훈독, 아래에 한국어 훈음
+  // 한자 카드: 한자만 보이고, 빈 곳을 누르면 위에 음독·훈독, 아래에 한국어 훈음. 한자를 누르면 한자 정보
   const paintKanji = (c, run, missed) => {
     const shown = step >= 1;
     replace(cardEl,
       h('div', { class: 'tools' },
         h('button', { type: 'button', class: 'icon-btn sm muted', title: '복사', onclick: (e) => { e.stopPropagation(); copyText(c.front); } }, icon('copy', 16)),
-        h('button', { type: 'button', class: 'icon-btn sm muted', title: '듣기', onclick: (e) => { e.stopPropagation(); speak(c.read); } }, icon('speaker', 18)),
-        h('button', { type: 'button', class: 'icon-btn sm muted', title: '한자 정보', onclick: (e) => { e.stopPropagation(); openKanji(c.front); } }, icon('book', 18))),
+        h('button', { type: 'button', class: 'icon-btn sm muted', title: '듣기', onclick: (e) => { e.stopPropagation(); speak(c.read); } }, icon('speaker', 18))),
       h('div', { class: 't-body' },
         h('div', { class: ['k-reads', !shown && 'hidden-text'] },
           h('div', { class: 'k-read' }, h('span', { class: 'k-label' }, '음독'), h('span', { class: 'jp' }, c.on.join('・') || '—')),
           h('div', { class: 'k-read' }, h('span', { class: 'k-label' }, '훈독'), h('span', { class: 'jp' }, c.kun.join('・') || '—'))),
-        h('div', { class: 't-word t-kanji', lang: 'ja' }, c.front),
+        h('div', { class: 't-word t-kanji', lang: 'ja' }, h('span', { class: 'k' }, c.front)),
         h('div', { class: ['t-mean', !shown && 'hidden-text'] }, c.meaning || '—')),
       missed > 0 && st.deck.need > 1 && h('span', { class: 'streak' }, `연속 ${run}/${st.deck.need}`));
   };
@@ -355,7 +355,7 @@ export function testRunView(_p, query, ctx) {
     const ov = h('div', { class: 'overlay-help' },
       h('label', { class: 'bubble check', style: { justifySelf: 'start' } }, cb, '다시 보지 않기'),
       st.testType === 'kanji'
-        ? h('div', { class: 'bubble', style: { justifySelf: 'center' } }, '카드 누름 → 음독·훈독과 훈음', h('br'), '한 번 더 → 숨김', h('br'), '오른쪽 위 책 버튼 → 한자 정보')
+        ? h('div', { class: 'bubble', style: { justifySelf: 'center' } }, '카드 빈 곳 누름 → 음독·훈독과 훈음', h('br'), '한 번 더 → 숨김', h('br'), '한자를 누르면 그 한자의 정보')
         : h('div', { class: 'bubble', style: { justifySelf: 'center' } }, '1 카드 누름 → 후리가나 & 단어 음성', h('br'), '2 한 번 더 → 뜻', h('br'), '3 한 번 더 → 숨김', h('br'), '한자를 누르면 그 한자의 정보'),
       h('div', { class: 'row between' }, h('div', { class: 'bubble' }, '모르는 단어는', h('br'), '왼쪽으로 스와이프!'), h('div', { class: 'bubble' }, '아는 단어는', h('br'), '오른쪽으로 스와이프!')),
       h('div', { class: 'row between' }, h('div', { class: 'bubble small' }, `연속 정답 x${st.deck.need}: 모른다고 한 단어는 ${st.deck.need}번 연속 맞혀야 끝나요`),
